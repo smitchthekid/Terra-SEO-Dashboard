@@ -1,0 +1,224 @@
+Project scope
+Goal: Build an internal app that plugs into existing Serpstat Rank Tracker projects and surfaces trend analysis for keywords, URLs, and competitors, with flexible filters and simple visualizations.
+
+Core data sources:
+
+Serpstat Rank Tracker API v4 (projects list, regions, URL/keyword positions history, SERP results history).
+
+Optional: BigQuery or Sheets later, if you decide to persist and enrich historical datasets beyond what Serpstat returns.
+​
+
+Primary users: You (and possibly team members) monitoring SEO projects and wanting faster “what changed and why?” answers than the native UI.
+
+Key use cases:
+
+See position trends for a keyword or URL over a chosen date range, including velocity (slope of change).
+
+Quickly identify big movers: raised, dropped, and without changes, over a period.
+​
+
+Compare your domain vs tracked competitors on average position, traffic share, and keyword counts.
+
+Tag- or segment-level visibility: e.g., “branded vs non-brand”, topical clusters, or page types.
+
+Non-goals (v1):
+
+Full project setup/editing in Serpstat (creating projects, adding keywords).
+
+Full-blown reporting suite; this is a trend exploration and triage tool.
+
+High-level architecture
+Frontend: React (or your usual stack) single-page app generated/manipulated in Antigravity, talking to a backend REST API.
+
+Backend: Lightweight Node/Express or Python/FastAPI service that:
+
+Stores the Serpstat API token securely and proxies requests.
+​
+
+Normalizes Serpstat responses into clean JSON for the UI (projects, regions, trends).
+
+Storage (optional v1): In-memory caching; future: BigQuery or a small DB if you want your own long-term history and advanced metrics.
+
+Hosting: Whatever you’re already using (Cloudflare Pages + Workers, etc.); Antigravity just produces the code and deploy config.
+
+Functional requirements
+Authentication & configuration
+
+Store and manage a single Serpstat API token on the backend (env var or secrets manager).
+​
+
+Minimal UI screen where you can see API usage/credits left (later).
+​
+
+Project & region selection
+
+Endpoint: GET /api/projects → calls Rank Tracker API “list of all your Rank Tracker projects”.
+
+Endpoint: GET /api/projects/:id/regions → calls Rank Tracker “list of project search regions and their status”.
+
+Frontend:
+
+Project dropdown (searchable).
+
+Region dropdown per project; disabled if none.
+
+Keyword & URL trend analysis
+
+Backend:
+
+GET /api/projects/:id/regions/:regionId/positions-history?keywords=&url=&date_from=&date_to= backed by Serpstat “positions history” (URLs/keywords with positions history, top 100 SERP).
+
+Frontend:
+
+Date range picker (with quick presets: last 7/30/90 days).
+​
+
+Input for keyword(s) and/or URL filter.
+
+Time-series chart showing average position over time, plus point markers for updates.
+
+Metrics panel: average position, best position, worst position, net change, and “slope” (trend direction).
+​
+
+Movers & stability view
+
+Backend builds aggregates from positions history:
+
+Raised: keywords with improved positions over the period.
+​
+
+Dropped: keywords with declined positions.
+​
+
+Without changes: flat or negligible change.
+​
+
+Frontend “Movers” tab for selected project/region/date range:
+
+Table with keyword, start pos, end pos, delta, volume, URL in SERP, tags.
+​
+
+Sortable by delta, volume, or final position.
+​
+
+Competitor comparison
+
+Backend:
+
+GET /api/projects/:id/competitors using Rank Tracker API “list of competitors from top 20 project keywords” and/or “competitors report”.
+
+Frontend:
+
+Compact table + small chart for traffic share, average position, and keyword count per competitor.
+​
+
+Toggle to view trends over time where data is available.
+​
+
+Tag/segment analysis
+
+Use keyword tags from Serpstat where available.
+​
+
+View average position and visibility trends by tag group across time (e.g., “Brand”, “Product A”).
+​
+
+Performance & UX
+
+Simple pagination on lists (keywords, URLs) using page and size from API.
+​
+
+Debounced queries (typing a keyword filter should not hammer the API).
+​
+
+Example feature table
+Area	API basis	v1 UI outcome
+Project select	List projects & regions	Project + region dropdowns
+Trends	Positions history by keyword/URL	Time-series charts + trend metrics
+Movers	Counts of raised/dropped/unchanged keywords	“Big movers” report, sortable
+Competitors	Competitors + traffic share, avg position, keywords	Competitor comparison table/chart
+Segments/tags	Keyword tags + positions history	Tag-level visibility trend charts and summaries
+Build plan (Antigravity-focused)
+You can run this as a sequence of agent prompts plus small manual tweaks.
+
+Backend scaffold
+
+In Antigravity, prompt an agent:
+
+“Create a Node.js + Express backend with TypeScript exposing REST endpoints to call the Serpstat Rank Tracker API v4 using an API token stored in an environment variable. Include endpoints for: projects list, project regions, positions history by project/region/keyword/url/date range, and competitors.”
+
+Ensure generated code:
+
+Reads SERPSTAT_API_TOKEN from env.
+​
+
+Centralizes HTTP calls to https://api.serpstat.com/v4.
+​
+
+Handles pagination (page, size) and basic error handling/rate limiting.
+​
+
+Frontend scaffold
+
+Prompt:
+
+“Create a React SPA that consumes the backend API. Include views: 1) Project/region selector with cached state, 2) Keyword/URL trends view with a date range picker and chart, 3) Movers report table, 4) Competitor comparison page with table and chart.”
+
+Ask Antigravity to wire:
+
+API client layer (fetches with base URL from env/config).
+
+Basic layout with sidebar navigation: Projects, Trends, Movers, Competitors.
+
+Trend computation logic
+
+In the backend, implement a utility that, given a list of positions over dates, computes:
+
+Net change (last − first), average position, best/worst, and a simple linear regression slope to indicate trend direction.
+
+Expose this via the positions-history endpoint so the frontend gets pre-computed metrics per keyword/URL.
+
+Movers aggregation
+
+Backend: for a date range, compare first and last position per keyword, classify as raised/dropped/without changes and return counts + detail list.
+​
+
+Frontend: show summary counts + detail table with filters (e.g., show only big movers, delta threshold).
+​
+
+Competitor metrics
+
+Backend: hit competitor-related endpoints and compute traffic share, keywords quantity, average position as in Serpstat UI.
+
+Frontend: table + small bar chart of traffic share and average position by competitor.
+​
+
+Tag/segment view
+
+Extend positions-history response to include keyword tags.
+​
+
+Backend: group by tag, compute aggregate trend metrics.
+​
+
+Frontend: chart of average position over time per selected tag or tag group.
+​
+
+Persistence (optional but recommended)
+
+If you want richer analytics than Serpstat’s period responses:
+
+Use Antigravity with BigQuery MCP to scaffold a table schema: project_id, region_id, date, keyword, url, position, volume, tag, etc.
+
+Create a daily job (Cloud Scheduler + Cloud Run or similar) to pull fresh data and append to BigQuery.
+​
+
+Frontend can then toggle between “live from Serpstat” and “extended history from BigQuery.”
+​
+
+Deployment
+
+Use Antigravity to generate Dockerfile or deployment scripts for your preferred host (e.g., Cloud Run for backend, Cloudflare Pages for frontend).
+
+Configure environment variables for SERPSTAT_API_TOKEN, API base URLs, etc.
+​
