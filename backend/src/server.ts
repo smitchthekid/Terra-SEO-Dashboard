@@ -80,19 +80,7 @@ function parseCSVContent(raw: string): void {
     console.log(`[CSV] Loaded ${KEYWORDS.length} keywords`);
 }
 
-function parseCSV(): void {
-    const csvPath = path.resolve(__dirname, '../../User Assets/Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-    if (!fs.existsSync(csvPath)) {
-        console.log('[CSV] No initial file found to load on startup.');
-        return;
-    }
-    try {
-        const raw = fs.readFileSync(csvPath, 'utf-8');
-        parseCSVContent(raw);
-    } catch (e: any) {
-        console.error('Initial CSV load failed:', e.message);
-    }
-}
+// Startup file load removed per requirement
 
 /** Simple CSV line parser that handles quoted fields with commas */
 function parseCSVLine(line: string): string[] {
@@ -115,8 +103,7 @@ function parseCSVLine(line: string): string[] {
     return result;
 }
 
-// Load CSV on startup
-parseCSV();
+// No local persistence, wait for web upload
 
 // ---------------------------------------------------------------------------
 // File Upload Handlers (Local File / Google Sheet URL)
@@ -134,11 +121,7 @@ app.post('/api/upload-csv', upload.single('file'), (req, res) => {
         const raw = fs.readFileSync(req.file.path, 'utf-8');
         parseCSVContent(raw);
 
-        // Save to persisted path
-        const targetDir = path.resolve(__dirname, '../../User Assets');
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        const csvPath = path.join(targetDir, 'Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-        fs.writeFileSync(csvPath, raw);
+
 
         res.json({ success: true, count: KEYWORDS.length });
     } catch (e: any) {
@@ -166,11 +149,7 @@ app.post('/api/upload-csv-url', async (req, res) => {
         const raw = response.data;
         parseCSVContent(raw);
 
-        // Save to persisted path
-        const targetDir = path.resolve(__dirname, '../../User Assets');
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        const csvPath = path.join(targetDir, 'Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-        fs.writeFileSync(csvPath, raw);
+
 
         res.json({ success: true, count: KEYWORDS.length });
     } catch (e: any) {

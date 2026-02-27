@@ -7,6 +7,8 @@ import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie, Sector } from 'recharts';
 import ReportView from './ReportView';
 
+axios.defaults.baseURL = 'http://localhost:3001';
+
 const queryClient = new QueryClient();
 
 export type AppContextType = {
