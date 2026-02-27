@@ -3,7 +3,6 @@ import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useO
 import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, Filter, FileText, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie, Sector } from 'recharts';
 import ReportView from './ReportView';
 
@@ -158,159 +157,6 @@ const Layout = () => {
       </div>
     </div>
   );
-};
-
-// ---------------------------------------------------------------------------
-// Data Status Wrapper & Uploader
-// ---------------------------------------------------------------------------
-
-const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
-  const [url, setUrl] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
-
-  const onDrop = async (acceptedFiles: File[]) => {
-    if (acceptedFiles.length === 0) return;
-    setUploading(true);
-    setError('');
-
-    const formData = new FormData();
-    formData.append('file', acceptedFiles[0]);
-
-    try {
-      await axios.post('/api/upload-csv', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-      onDataLoaded();
-    } catch (e: any) {
-      setError(e.response?.data?.error || e.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { 'text/csv': ['.csv'] },
-    multiple: false
-  });
-
-  const handleUrlSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url) return;
-    setUploading(true);
-    setError('');
-
-    try {
-      await axios.post('/api/upload-csv-url', { url });
-      onDataLoaded();
-    } catch (e: any) {
-      setError(e.response?.data?.error || e.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8 max-w-lg w-full">
-        <div className="flex justify-center mb-6">
-          <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
-            <BarChart3 className="w-8 h-8 text-indigo-600" />
-          </div>
-        </div>
-        <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">Connect Your Data</h1>
-        <p className="text-gray-500 text-center mb-8">Upload a Serpstat CSV export or provide a Google Sheets URL to initialize the tracking dashboard.</p>
-
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm mb-6 font-medium">
-            {error}
-          </div>
-        )}
-
-        <div className="space-y-8">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Option 1: Drag & Drop CSV</h3>
-            <div
-              {...getRootProps()}
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${isDragActive ? 'border-indigo-500 bg-indigo-50' : 'border-gray-300 hover:border-indigo-400 bg-gray-50 hover:bg-gray-100'
-                } ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
-            >
-              <input {...getInputProps()} />
-              <FileText className="w-10 h-10 text-gray-400 mx-auto mb-3" />
-              {isDragActive ? (
-                <p className="text-indigo-600 font-medium">Drop the CSV file here...</p>
-              ) : (
-                <p className="text-gray-600">
-                  <span className="font-semibold text-indigo-600">Click to upload</span> or drag and drop a .csv file
-                </p>
-              )}
-            </div>
-          </div>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center" aria-hidden="true">
-              <div className="w-full border-t border-gray-200" />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-white px-3 text-sm text-gray-500 font-medium">OR</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleUrlSubmit}>
-            <h3 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Option 2: Google Sheets URL</h3>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://docs.google.com/spreadsheets/d/..."
-                className="flex-1 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md py-2.5 px-3 border"
-                disabled={uploading}
-              />
-              <button
-                type="submit"
-                disabled={!url || uploading}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {uploading ? 'Loading...' : 'Connect'}
-              </button>
-            </div>
-            <p className="mt-2 text-xs text-gray-500">The sheet must be publicly accessible or shared with 'Anyone with the link'.</p>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ProtectedLayout = () => {
-  const { data: status, isLoading, refetch } = useQuery({
-    queryKey: ['data-status'],
-    queryFn: async () => {
-      const { data } = await axios.get('/api/data-status');
-      return data;
-    },
-  });
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-12 h-12 bg-indigo-200 rounded-full mb-4"></div>
-          <div className="text-indigo-600 font-medium">Checking Data Store...</div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!status?.loaded) {
-    return <UploadScreen onDataLoaded={refetch} />;
-  }
-
-  return <Layout />;
 };
 
 // ---------------------------------------------------------------------------
@@ -1063,7 +909,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <Router>
         <Routes>
-          <Route path="/" element={<ProtectedLayout />}>
+          <Route path="/" element={<Layout />}>
             <Route index element={<ReportView />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="trends" element={<TrendsView />} />

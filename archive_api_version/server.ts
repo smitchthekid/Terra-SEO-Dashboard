@@ -3,16 +3,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
-import multer from 'multer';
-import axios from 'axios';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-const upload = multer({ dest: 'uploads/' });
 
 // ---------------------------------------------------------------------------
 // CSV Data Layer
@@ -30,10 +26,18 @@ interface KeywordRecord {
 let KEYWORDS: KeywordRecord[] = [];
 let ALL_DATES: string[] = [];
 
-function parseCSVContent(raw: string): void {
+function parseCSV(): void {
+    const csvPath = path.resolve(__dirname, '../../User Assets/Positions Hisotry Fetch FEB 26 - Sheet1.csv');
+    if (!fs.existsSync(csvPath)) {
+        console.error('[CSV] File not found:', csvPath);
+        return;
+    }
+
+    const raw = fs.readFileSync(csvPath, 'utf-8');
     const lines = raw.split(/\r?\n/).filter(line => line.trim().length > 0);
     if (lines.length < 2) {
-        throw new Error('[CSV] File has no data rows');
+        console.error('[CSV] File has no data rows');
+        return;
     }
 
     // Parse header to get date columns
@@ -49,7 +53,7 @@ function parseCSVContent(raw: string): void {
     console.log(`[CSV] Found ${ALL_DATES.length} date columns, from ${ALL_DATES[ALL_DATES.length - 1]} to ${ALL_DATES[0]}`);
 
     // Parse data rows
-    const newKeywords: KeywordRecord[] = [];
+    KEYWORDS = [];
     for (let i = 1; i < lines.length; i++) {
         const cols = parseCSVLine(lines[i]);
         if (cols.length < 5) continue;
@@ -73,25 +77,10 @@ function parseCSVContent(raw: string): void {
         const urlInSerp = cols[cols.length - 2]?.trim() || '';
         const expectedUrl = cols[cols.length - 1]?.trim() || '';
 
-        newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
+        KEYWORDS.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
     }
 
-    KEYWORDS = newKeywords;
     console.log(`[CSV] Loaded ${KEYWORDS.length} keywords`);
-}
-
-function parseCSV(): void {
-    const csvPath = path.resolve(__dirname, '../../User Assets/Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-    if (!fs.existsSync(csvPath)) {
-        console.log('[CSV] No initial file found to load on startup.');
-        return;
-    }
-    try {
-        const raw = fs.readFileSync(csvPath, 'utf-8');
-        parseCSVContent(raw);
-    } catch (e: any) {
-        console.error('Initial CSV load failed:', e.message);
-    }
 }
 
 /** Simple CSV line parser that handles quoted fields with commas */
@@ -117,66 +106,6 @@ function parseCSVLine(line: string): string[] {
 
 // Load CSV on startup
 parseCSV();
-
-// ---------------------------------------------------------------------------
-// File Upload Handlers (Local File / Google Sheet URL)
-// ---------------------------------------------------------------------------
-
-app.get('/api/data-status', (_req, res) => {
-    res.json({ loaded: KEYWORDS.length > 0, keywordCount: KEYWORDS.length });
-});
-
-app.post('/api/upload-csv', upload.single('file'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-    try {
-        const raw = fs.readFileSync(req.file.path, 'utf-8');
-        parseCSVContent(raw);
-
-        // Save to persisted path
-        const targetDir = path.resolve(__dirname, '../../User Assets');
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        const csvPath = path.join(targetDir, 'Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-        fs.writeFileSync(csvPath, raw);
-
-        res.json({ success: true, count: KEYWORDS.length });
-    } catch (e: any) {
-        res.status(500).json({ error: e.message });
-    } finally {
-        fs.unlinkSync(req.file.path);
-    }
-});
-
-app.post('/api/upload-csv-url', async (req, res) => {
-    try {
-        const { url } = req.body;
-        if (!url) return res.status(400).json({ error: 'URL is required' });
-
-        // If it's a standard Google Sheets URL, convert it to CSV export link format automatically
-        let fetchUrl = url;
-        if (url.includes('docs.google.com/spreadsheets')) {
-            const matches = url.match(/\/d\/(.*?)(\/|$)/);
-            if (matches && matches[1]) {
-                fetchUrl = `https://docs.google.com/spreadsheets/d/${matches[1]}/export?format=csv`;
-            }
-        }
-
-        const response = await axios.get(fetchUrl);
-        const raw = response.data;
-        parseCSVContent(raw);
-
-        // Save to persisted path
-        const targetDir = path.resolve(__dirname, '../../User Assets');
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        const csvPath = path.join(targetDir, 'Positions Hisotry Fetch FEB 26 - Sheet1.csv');
-        fs.writeFileSync(csvPath, raw);
-
-        res.json({ success: true, count: KEYWORDS.length });
-    } catch (e: any) {
-        res.status(500).json({ error: typeof e.response?.data === 'string' ? e.response.data : e.message });
-    }
-});
 
 // ---------------------------------------------------------------------------
 // Utility: compute metrics for a keyword within a date range
