@@ -61,6 +61,10 @@ const Layout = () => {
     { name: 'Dashboard', href: '/dashboard', icon: Activity },
     { name: 'Trends', href: '/trends', icon: TrendingUp },
     { name: 'Movers', href: '/movers', icon: ArrowUpRight },
+    { name: 'Biggest Declines', href: '/declines', icon: ArrowDownRight },
+    { name: 'Biggest Improvements', href: '/improvements', icon: ArrowUpRight },
+    { name: 'First Page', href: '/first-page', icon: FileText },
+    { name: 'Top 3', href: '/top-3', icon: FileText },
     { name: 'Tags', href: '/tags', icon: Users },
   ];
 
@@ -389,15 +393,25 @@ const Dashboard = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Trends View
+// Trends Component / Filtered Table View
 // ---------------------------------------------------------------------------
 
-const TrendsView = () => {
+const TrendsComponent = ({
+  filterType = '',
+  defaultSortKey = 'volume',
+  defaultSortDir = 'desc',
+  title = 'Position History (Top 5 by Volume)'
+}: {
+  filterType?: string;
+  defaultSortKey?: string;
+  defaultSortDir?: 'asc' | 'desc';
+  title?: string
+}) => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
   const [keywordSearch, setKeywordSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState('');
   const [page, setPage] = useState(1);
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: defaultSortKey, dir: defaultSortDir });
 
   const { data: tags } = useQuery({
     queryKey: ['tags'],
@@ -408,7 +422,7 @@ const TrendsView = () => {
   });
 
   const { data: historyData, isLoading } = useQuery({
-    queryKey: ['positions-history', dateFrom, dateTo, selectedTag, keywordSearch, page, sortConfig],
+    queryKey: ['positions-history', dateFrom, dateTo, selectedTag, keywordSearch, page, sortConfig, filterType],
     queryFn: async () => {
       const { data } = await axios.get('/api/positions-history', {
         params: {
@@ -420,6 +434,7 @@ const TrendsView = () => {
           limit: 10,
           sort: sortConfig.key,
           order: sortConfig.dir,
+          filter_type: filterType,
         }
       });
       return data;
@@ -498,7 +513,7 @@ const TrendsView = () => {
 
       {/* Chart */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[400px]">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Position History (Top 5 by Volume)</h2>
+        <h2 className="text-lg font-medium text-gray-900 mb-4">{title}</h2>
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
             <span className="text-gray-400 font-medium animate-pulse">Loading chart data...</span>
@@ -626,6 +641,12 @@ const TrendsView = () => {
     </div>
   );
 };
+
+export const TrendsView = () => <TrendsComponent />;
+export const DeclinesView = () => <TrendsComponent filterType="declines" defaultSortKey="netChange" defaultSortDir="asc" title="Biggest Declines (Top 5)" />;
+export const ImprovementsView = () => <TrendsComponent filterType="improvements" defaultSortKey="netChange" defaultSortDir="desc" title="Biggest Improvements (Top 5)" />;
+export const FirstPageView = () => <TrendsComponent filterType="first_page" defaultSortKey="volume" defaultSortDir="desc" title="First Page Keywords (Top 5 Volume)" />;
+export const Top3View = () => <TrendsComponent filterType="top_3" defaultSortKey="volume" defaultSortDir="desc" title="Top 3 Keywords (Top 5 Volume)" />;
 
 // ---------------------------------------------------------------------------
 // Movers View
@@ -1070,6 +1091,10 @@ export default function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="trends" element={<TrendsView />} />
             <Route path="movers" element={<MoversView />} />
+            <Route path="declines" element={<DeclinesView />} />
+            <Route path="improvements" element={<ImprovementsView />} />
+            <Route path="first-page" element={<FirstPageView />} />
+            <Route path="top-3" element={<Top3View />} />
             <Route path="tags" element={<TagsView />} />
           </Route>
         </Routes>

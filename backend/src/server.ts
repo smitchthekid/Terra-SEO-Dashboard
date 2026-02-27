@@ -647,6 +647,7 @@ app.get('/api/positions-history', (req, res) => {
         const limit = Math.min(500, Math.max(1, parseInt(req.query.limit as string) || 50));
         const sortBy = (req.query.sort as string) || 'volume';
         const order = (req.query.order as string) || 'desc';
+        const filterType = (req.query.filter_type as string) || '';
 
         // Filter keywords
         let filtered = KEYWORDS;
@@ -666,7 +667,7 @@ app.get('/api/positions-history', (req, res) => {
         }
 
         // Compute metrics for each keyword
-        const withMetrics = filtered.map(kw => {
+        let withMetrics = filtered.map(kw => {
             const metrics = computeMetrics(kw, dateFrom, dateTo);
 
             // Build position timeline for the date range
@@ -689,6 +690,17 @@ app.get('/api/positions-history', (req, res) => {
                 positions,
             };
         });
+
+        // Apply Report Filters
+        if (filterType === 'declines') {
+            withMetrics = withMetrics.filter(kw => kw.metrics.netChange < 0);
+        } else if (filterType === 'improvements') {
+            withMetrics = withMetrics.filter(kw => kw.metrics.netChange > 0);
+        } else if (filterType === 'first_page') {
+            withMetrics = withMetrics.filter(kw => kw.metrics.endPos !== null && kw.metrics.endPos <= 10);
+        } else if (filterType === 'top_3') {
+            withMetrics = withMetrics.filter(kw => kw.metrics.endPos !== null && kw.metrics.endPos <= 3);
+        }
 
         // Sort
         withMetrics.sort((a, b) => {
