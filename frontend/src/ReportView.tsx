@@ -56,6 +56,11 @@ function fmtNum(n: number | null | undefined, decimals = 0): string {
     return n.toFixed(decimals);
 }
 
+function fmtRank(n: number | null | undefined, decimals = 1): string {
+    if (n === null || n === undefined) return '>100';
+    return n.toFixed(decimals);
+}
+
 function fmtDelta(n: number | null | undefined, decimals = 0): string {
     if (n === null || n === undefined) return '-';
     const prefix = n > 0 ? '+' : '';
@@ -97,9 +102,9 @@ export default function ReportView() {
 
     // Sort states per table
     const [trendsSort, setTrendsSort] = useState<SortConfig>({ key: 'click_delta', dir: 'desc' });
-    const [declinesSort, setDeclinesSort] = useState<SortConfig>({ key: 'click_delta', dir: 'asc' });
-    const [gainsSort, setGainsSort] = useState<SortConfig>({ key: 'click_delta', dir: 'desc' });
-    const [combinedSort, setCombinedSort] = useState<SortConfig>({ key: 'click_delta', dir: 'desc' });
+    const [declinesSort, setDeclinesSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
+    const [gainsSort, setGainsSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
+    const [combinedSort, setCombinedSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
     const [categoriesSort, setCategoriesSort] = useState<SortConfig>({ key: 'clicks_delta_3mo', dir: 'desc' });
 
     // Pie chart filter state
@@ -440,8 +445,8 @@ export default function ReportView() {
                                             <td className={`px-4 py-3 text-sm font-bold text-right ${row.click_delta > 0 ? 'text-emerald-600' : row.click_delta < 0 ? 'text-red-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.click_delta)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtNum(row.rank_now, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtNum(row.rank_was, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_now, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_was, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 font-bold text-right">{row.count}</td>
                                         </tr>
                                     );
@@ -458,6 +463,7 @@ export default function ReportView() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <SortableHeader label="Query" sortKey="query" current={declinesSort} onSort={toggleSort(setDeclinesSort)} />
+                                    <SortableHeader label="Volume" sortKey="volume" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Click Delta" sortKey="click_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Delta" sortKey="rank_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
@@ -475,25 +481,26 @@ export default function ReportView() {
                                             className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
                                         >
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
+                                            <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
                                             <td className="px-4 py-3 text-sm font-bold text-red-600 text-right">{fmtDelta(row.click_delta)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(row.impressions_delta)}</td>
                                             <td className={`px-4 py-3 text-sm font-medium text-right ${row.rank_delta > 0 ? 'text-red-600' : row.rank_delta < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.rank_delta, 1)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_was, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_now, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_was, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_now, 1)}</td>
                                         </tr>
                                     );
                                 })}
                                 {/* Grand Total */}
                                 {reportData?.declinesTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
-                                        <td className="px-4 py-3 text-sm text-gray-900">Grand Total ({reportData.declinesTotal.count})</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.declinesTotal.count})</td>
                                         <td className="px-4 py-3 text-sm text-red-700 text-right">{fmtDelta(reportData.declinesTotal.click_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.declinesTotal.impressions_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.declinesTotal.rank_delta, 2)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.declinesTotal.rank_was, 1)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.declinesTotal.rank_now, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.declinesTotal.rank_was, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.declinesTotal.rank_now, 1)}</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -508,6 +515,7 @@ export default function ReportView() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <SortableHeader label="Query" sortKey="query" current={gainsSort} onSort={toggleSort(setGainsSort)} />
+                                    <SortableHeader label="Volume" sortKey="volume" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Click Delta" sortKey="click_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Pos. Gained" sortKey="positions_gained" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
@@ -525,23 +533,24 @@ export default function ReportView() {
                                             className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
                                         >
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
+                                            <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
                                             <td className="px-4 py-3 text-sm font-bold text-emerald-600 text-right">{fmtDelta(row.click_delta)}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-emerald-600 text-right">{fmtDelta(row.positions_gained, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(row.impressions_delta)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_was, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_now, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_was, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_now, 1)}</td>
                                         </tr>
                                     );
                                 })}
                                 {/* Grand Total */}
                                 {reportData?.gainsTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
-                                        <td className="px-4 py-3 text-sm text-gray-900">Grand Total ({reportData.gainsTotal.count})</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.gainsTotal.count})</td>
                                         <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.click_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.positions_gained, 2)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.gainsTotal.impressions_delta)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.gainsTotal.rank_was, 1)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.gainsTotal.rank_now, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.gainsTotal.rank_was, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.gainsTotal.rank_now, 1)}</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -557,6 +566,7 @@ export default function ReportView() {
                                 <tr>
                                     <SortableHeader label="URL" sortKey="canonical_url" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
                                     <SortableHeader label="Query" sortKey="query" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
+                                    <SortableHeader label="Volume" sortKey="volume" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Click Delta" sortKey="click_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Rank Delta" sortKey="rank_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
@@ -585,6 +595,7 @@ export default function ReportView() {
                                                 ) : '-'}
                                             </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[200px] truncate" title={row.query}>{row.query}</td>
+                                            <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
                                             <td className={`px-4 py-3 text-sm font-bold text-right ${row.click_delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                                                 {fmtDelta(row.click_delta)}
                                             </td>
@@ -592,20 +603,20 @@ export default function ReportView() {
                                             <td className={`px-4 py-3 text-sm font-medium text-right ${row.rank_delta > 0 ? 'text-red-600' : row.rank_delta < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.rank_delta, 1)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_was, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(row.rank_now, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_was, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_now, 1)}</td>
                                         </tr>
                                     );
                                 })}
                                 {/* Grand Total */}
                                 {reportData?.combinedTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
-                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.combinedTotal.count})</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={3}>Grand Total ({reportData.combinedTotal.count})</td>
                                         <td className="px-4 py-3 text-sm text-gray-900 text-right">{fmtDelta(reportData.combinedTotal.click_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.combinedTotal.impressions_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.combinedTotal.rank_delta, 2)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.combinedTotal.rank_was, 1)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtNum(reportData.combinedTotal.rank_now, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.combinedTotal.rank_was, 1)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.combinedTotal.rank_now, 1)}</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -639,8 +650,8 @@ export default function ReportView() {
                                             <td className={`px-4 py-3 text-sm font-bold text-right ${row.clicks_delta_3mo > 0 ? 'text-emerald-600' : row.clicks_delta_3mo < 0 ? 'text-red-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.clicks_delta_3mo)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtNum(row.rank_last_3mo, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtNum(row.rank_prev_3mo, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_last_3mo, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_prev_3mo, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 font-bold text-right">{row.count}</td>
                                         </tr>
                                     );

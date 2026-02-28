@@ -98,9 +98,9 @@ const Layout = () => {
     { name: 'Movers', href: '/movers', icon: ArrowUpRight },
     { name: 'Biggest Declines', href: '/declines', icon: ArrowDownRight },
     { name: 'Biggest Improvements', href: '/improvements', icon: ArrowUpRight },
-    { name: 'First Page', href: '/first-page', icon: FileText },
-    { name: 'Top 3', href: '/top-3', icon: FileText },
-    { name: 'Tags', href: '/tags', icon: Users },
+    { name: 'Rank First Page', href: '/first-page', icon: FileText },
+    { name: 'Rank Top 3', href: '/top-3', icon: FileText },
+    { name: 'Product Categories', href: '/tags', icon: Users },
   ];
 
   return (
@@ -707,8 +707,8 @@ const TrendsComponent = ({
 export const TrendsView = () => <TrendsComponent />;
 export const DeclinesView = () => <TrendsComponent filterType="declines" defaultSortKey="netChange" defaultSortDir="asc" title="Biggest Declines (Top 5)" />;
 export const ImprovementsView = () => <TrendsComponent filterType="improvements" defaultSortKey="netChange" defaultSortDir="desc" title="Biggest Improvements (Top 5)" />;
-export const FirstPageView = () => <TrendsComponent filterType="first_page" defaultSortKey="volume" defaultSortDir="desc" title="First Page Keywords (Top 5 Volume)" />;
-export const Top3View = () => <TrendsComponent filterType="top_3" defaultSortKey="volume" defaultSortDir="desc" title="Top 3 Keywords (Top 5 Volume)" />;
+export const FirstPageView = () => <TrendsComponent filterType="first_page" defaultSortKey="volume" defaultSortDir="desc" title="Rank First Page (Top 5 Volume)" />;
+export const Top3View = () => <TrendsComponent filterType="top_3" defaultSortKey="volume" defaultSortDir="desc" title="Rank Top 3 (Top 5 Volume)" />;
 
 // ---------------------------------------------------------------------------
 // Movers View

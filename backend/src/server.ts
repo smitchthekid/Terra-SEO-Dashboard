@@ -16,6 +16,8 @@ app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
 
 // Serve frontend static files in production
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const frontendPath = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(frontendPath));
 
@@ -375,11 +377,14 @@ function assignTrendBucket(clickDelta: number): string {
 }
 
 function assignRankMovement(rankPrev: number | null, rankNow: number | null): string {
-    if (rankPrev === null || rankNow === null) return 'No Change';
-    if (rankPrev > 10 && rankNow <= 10) return 'Gained First Page';
-    if (rankPrev <= 10 && rankNow > 10) return 'Lost First Page';
-    if (rankNow < rankPrev) return 'Gained Rank';
-    if (rankNow > rankPrev) return 'Lost Rank';
+    const prev = rankPrev === null ? 100 : rankPrev;
+    const now = rankNow === null ? 100 : rankNow;
+
+    if (prev === now) return 'No Change';
+    if (prev > 10 && now <= 10) return 'Gained First Page';
+    if (prev <= 10 && now > 10) return 'Lost First Page';
+    if (now < prev) return 'Gained Rank';
+    if (now > prev) return 'Lost Rank';
     return 'No Change';
 }
 
@@ -388,20 +393,31 @@ function buildReportData(queryContains: string, urlContains: string, avgPosMax: 
     const sortedDates = [...ALL_DATES].sort(); // chronological
     if (sortedDates.length === 0) return [];
 
-    // Grab the newest available date 
+    // Grab the newest available date
     const newestDate = sortedDates[sortedDates.length - 1];
     const newestMs = new Date(newestDate).getTime();
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
 
-    // To prevent data gaps (e.g., 6.5 month leaps) from generating zero-points in the last "3 months",
-    // we take the newest half of available timeline points as the "latest period",
-    // and the older half as the "previous period".
-    // Alternatively, if we only have 2 points, they map index 1 vs index 0.
-    const halfLen = Math.floor(sortedDates.length / 2);
-    const last3moDates = sortedDates.slice(-halfLen);
+    // Define Last 3 Months strictly as the 90 days relative to the dataset's newest anchor point
+    const last3moDates = sortedDates.filter(d => new Date(d).getTime() > newestMs - ninetyDaysMs);
 
-    // The previous 3m equivalent is just the half prior to the latest half
-    const prevLen = Math.floor((sortedDates.length - halfLen));
-    const prev3moDates = sortedDates.slice(0, prevLen);
+    // Initial definition for Previous 3 Months is the 90 days before that
+    let prev3moDates = sortedDates.filter(d => {
+        const t = new Date(d).getTime();
+        return t <= newestMs - ninetyDaysMs && t > newestMs - ninetyDaysMs * 2;
+    });
+
+    // RESILIENCY MEASURE: If a massive data gap (like the 6.5 month leap) caused `prev3moDates` to be completely empty, 
+    // dynamically locate the next most recent block's anchor and build a functional 90-day baseline window from it.
+    if (prev3moDates.length === 0 && sortedDates.length > last3moDates.length) {
+        const prevBlockNewestDate = sortedDates[sortedDates.length - last3moDates.length - 1];
+        const prevBlockNewestMs = new Date(prevBlockNewestDate).getTime();
+
+        prev3moDates = sortedDates.filter(d => {
+            const t = new Date(d).getTime();
+            return t <= prevBlockNewestMs && t > prevBlockNewestMs - ninetyDaysMs;
+        });
+    }
 
     // Last checked cutoff - keep time based to drop absolutely dead keywords
     const lastCheckedCutoff = new Date(newestMs - lastCheckedDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -517,6 +533,7 @@ app.get('/api/seo-report', (req, res) => {
             .sort((a, b) => a.click_delta - b.click_delta)
             .map(r => ({
                 query: r.query,
+                volume: r.volume,
                 click_delta: r.click_delta,
                 impressions_delta: r.impressions_delta,
                 rank_delta: r.rank_delta,
@@ -530,6 +547,7 @@ app.get('/api/seo-report', (req, res) => {
             .sort((a, b) => b.click_delta - a.click_delta)
             .map(r => ({
                 query: r.query,
+                volume: r.volume,
                 click_delta: r.click_delta,
                 positions_gained: r.positions_gained,
                 impressions_delta: r.impressions_delta,
@@ -544,6 +562,7 @@ app.get('/api/seo-report', (req, res) => {
             .map(r => ({
                 canonical_url: r.canonical_url,
                 query: r.query,
+                volume: r.volume,
                 click_delta: r.click_delta,
                 impressions_delta: r.impressions_delta,
                 rank_delta: r.rank_delta,
