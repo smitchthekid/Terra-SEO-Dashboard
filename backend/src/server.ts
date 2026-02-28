@@ -5,7 +5,6 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import axios from 'axios';
-import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -16,8 +15,6 @@ app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
 
 // Serve frontend static files in production
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const frontendPath = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(frontendPath));
 
@@ -674,10 +671,12 @@ app.get('/api/seo-report', (req, res) => {
 
 // GET /api/data-info  - summary about the loaded dataset
 app.get('/api/data-info', (_req, res) => {
-    const tagCounts: Record<string, number> = {};
+    const tagCounts: Record<string, { count: number, volume: number }> = {};
     KEYWORDS.forEach(kw => {
         kw.tags.forEach(tag => {
-            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            if (!tagCounts[tag]) tagCounts[tag] = { count: 0, volume: 0 };
+            tagCounts[tag].count += 1;
+            tagCounts[tag].volume += (kw.volume || 0);
         });
     });
 
@@ -689,24 +688,26 @@ app.get('/api/data-info', (_req, res) => {
             to: ALL_DATES[0]
         },
         tags: Object.entries(tagCounts)
-            .sort((a, b) => b[1] - a[1])
-            .map(([tag, count]) => ({ tag, count })),
+            .sort((a, b) => b[1].volume - a[1].volume) // Sort by volume initially to prioritize high value
+            .map(([tag, data]) => ({ tag, count: data.count, volume: data.volume })),
     });
 });
 
 // GET /api/tags - list all unique tags with counts
 app.get('/api/tags', (_req, res) => {
-    const tagCounts: Record<string, number> = {};
+    const tagCounts: Record<string, { count: number, volume: number }> = {};
     KEYWORDS.forEach(kw => {
         kw.tags.forEach(tag => {
-            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            if (!tagCounts[tag]) tagCounts[tag] = { count: 0, volume: 0 };
+            tagCounts[tag].count += 1;
+            tagCounts[tag].volume += (kw.volume || 0);
         });
     });
 
     res.json(
         Object.entries(tagCounts)
-            .sort((a, b) => b[1] - a[1])
-            .map(([tag, count]) => ({ tag, count }))
+            .sort((a, b) => b[1].volume - a[1].volume)
+            .map(([tag, data]) => ({ tag, count: data.count, volume: data.volume }))
     );
 });
 

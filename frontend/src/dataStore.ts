@@ -114,10 +114,12 @@ export function getDataStatus() {
 }
 
 export function getDataInfo() {
-    const tagCounts: Record<string, number> = {};
+    const tagCounts: Record<string, { count: number, volume: number }> = {};
     KEYWORDS.forEach(kw => {
         kw.tags.forEach(tag => {
-            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            if (!tagCounts[tag]) tagCounts[tag] = { count: 0, volume: 0 };
+            tagCounts[tag].count += 1;
+            tagCounts[tag].volume += (kw.volume || 0);
         });
     });
 
@@ -129,22 +131,24 @@ export function getDataInfo() {
             to: ALL_DATES[0]
         },
         tags: Object.entries(tagCounts)
-            .sort((a, b) => b[1] - a[1])
-            .map(([tag, count]) => ({ tag, count })),
+            .sort((a, b) => b[1].volume - a[1].volume)
+            .map(([tag, data]) => ({ tag, count: data.count, volume: data.volume })),
     };
 }
 
 export function getTags() {
-    const tagCounts: Record<string, number> = {};
+    const tagCounts: Record<string, { count: number, volume: number }> = {};
     KEYWORDS.forEach(kw => {
         kw.tags.forEach(tag => {
-            tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            if (!tagCounts[tag]) tagCounts[tag] = { count: 0, volume: 0 };
+            tagCounts[tag].count += 1;
+            tagCounts[tag].volume += (kw.volume || 0);
         });
     });
 
     return Object.entries(tagCounts)
-        .sort((a, b) => b[1] - a[1])
-        .map(([tag, count]) => ({ tag, count }));
+        .sort((a, b) => b[1].volume - a[1].volume)
+        .map(([tag, data]) => ({ tag, count: data.count, volume: data.volume }));
 }
 
 interface KeywordMetrics {

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext, Navigate } from 'react-router-dom';
-import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, Filter, FileText, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 
 import { useDropzone } from 'react-dropzone';
@@ -526,6 +526,20 @@ const TrendsComponent = ({
   const colors = ["#4f46e5", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
   const pagination = historyData?.pagination;
 
+  const tagPieData = useMemo(() => {
+    if (!tags || tags.length === 0) return [];
+    const sorted = [...tags].sort((a: any, b: any) => b.volume - a.volume);
+    const top = sorted.slice(0, 6).map(t => ({ name: t.tag, value: t.volume }));
+    const rest = sorted.slice(6);
+    if (rest.length > 0) {
+      top.push({
+        name: 'Other',
+        value: rest.reduce((sum, t) => sum + (t.volume || 0), 0)
+      });
+    }
+    return top;
+  }, [tags]);
+
   const toggleSortTrends = (key: string) => {
     setSortConfig(prev => ({
       key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc'
@@ -555,53 +569,85 @@ const TrendsComponent = ({
               className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
             />
           </div>
-          <div className="min-w-[200px]">
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-              <Filter className="inline w-3.5 h-3.5 mr-1" />Tag Filter
-            </label>
-            <select
-              value={selectedTag}
-              onChange={e => { setSelectedTag(e.target.value); setPage(1); }}
-              className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-            >
-              <option value="">All Tags</option>
-              {(tags || []).map((t: any) => (
-                <option key={t.tag} value={t.tag}>{t.tag} ({t.count})</option>
-              ))}
-            </select>
-          </div>
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[400px]">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">{title}</h2>
-        {isLoading ? (
-          <div className="flex-1 flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
-            <span className="text-gray-400 font-medium animate-pulse">Loading chart data...</span>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Category Search Volume Pie */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 col-span-1 min-h-[400px]">
+          <h2 className="text-base font-semibold text-gray-900 mb-1">Product Categories</h2>
+          <p className="text-xs text-gray-400 mb-4">Search volume volume distribution. Click to filter.</p>
+          <div className="h-64">
+            {tagPieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={tagPieData}
+                    cx="50%" cy="50%"
+                    innerRadius={55} outerRadius={85}
+                    dataKey="value"
+                    onClick={(_: any, index: number) => {
+                      const name = tagPieData[index]?.name;
+                      if (name === 'Other') return;
+                      setSelectedTag(prev => prev === name ? '' : name);
+                      setPage(1);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {tagPieData.map((entry: any, i: number) => (
+                      <Cell
+                        key={`cell-${i}`}
+                        fill={colors[i % colors.length]}
+                        opacity={selectedTag && selectedTag !== entry.name ? 0.3 : 1}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: any) => new Intl.NumberFormat('en-US').format(Number(value) || 0)} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-400 text-sm">No data</div>
+            )}
           </div>
-        ) : chartData.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
-            <span className="text-gray-400 font-medium">No position data for the selected filters</span>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={350}>
-            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} dy={10} />
-              <YAxis reversed tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} domain={['dataMin - 1', 'dataMax + 1']} label={{ value: 'Position', angle: -90, position: 'insideLeft', style: { fontSize: 12, fill: '#9ca3af' } }} />
-              <Tooltip
-                contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                itemStyle={{ fontSize: '12px', fontWeight: 500 }}
-                labelStyle={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}
-              />
-              <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
-              {Object.keys(chartData[0] || {}).filter(k => k !== 'date').map((key, i) => (
-                <Line type="monotone" key={key} dataKey={key} stroke={colors[i % colors.length]} strokeWidth={2} dot={false} connectNulls />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        )}
+          {selectedTag && (
+            <div className="mt-4 flex items-center gap-2 justify-center">
+              <span className="text-xs text-gray-500">Filtered:</span>
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">{selectedTag}</span>
+              <button onClick={() => { setSelectedTag(''); setPage(1); }} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear</button>
+            </div>
+          )}
+        </div>
+
+        {/* Chart */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 col-span-1 lg:col-span-2 min-h-[400px]">
+          <h2 className="text-lg font-medium text-gray-900 mb-4">{title}</h2>
+          {isLoading ? (
+            <div className="flex-1 flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
+              <span className="text-gray-400 font-medium animate-pulse">Loading chart data...</span>
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center h-64 border-2 border-dashed border-gray-200 rounded-lg">
+              <span className="text-gray-400 font-medium">No position data for the selected filters</span>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} dy={10} />
+                <YAxis reversed tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} domain={['dataMin - 1', 'dataMax + 1']} label={{ value: 'Position', angle: -90, position: 'insideLeft', style: { fontSize: 12, fill: '#9ca3af' } }} />
+                <Tooltip
+                  contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  itemStyle={{ fontSize: '12px', fontWeight: 500 }}
+                  labelStyle={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px', fontSize: '12px' }} />
+                {Object.keys(chartData[0] || {}).filter(k => k !== 'date').map((key, i) => (
+                  <Line type="monotone" key={key} dataKey={key} stroke={colors[i % colors.length]} strokeWidth={2} dot={false} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
       {/* Table */}
