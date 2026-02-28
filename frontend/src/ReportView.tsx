@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+import { getSeoReport } from './dataStore';
 import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell,
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
     PieChart, Pie, Sector,
 } from 'recharts';
 import { Search, ArrowUpDown, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
@@ -111,10 +111,7 @@ export default function ReportView() {
     const { data: reportData, isLoading } = useQuery({
         queryKey: ['seo-report', queryContains, urlContains, avgPosMax],
         queryFn: async () => {
-            const { data } = await axios.get('/api/seo-report', {
-                params: { queryContains, urlContains, avg_position_max: avgPosMax },
-            });
-            return data;
+            return getSeoReport({ queryContains, urlContains, avg_position_max: avgPosMax });
         },
         staleTime: 30000,
     });
@@ -137,7 +134,7 @@ export default function ReportView() {
     };
 
     // Metrics
-    const top = reportData?.topMetrics || {};
+    const top = (reportData?.topMetrics || {}) as any;
     const trends = useMemo(() => sortData(reportData?.trends || [], trendsSort), [reportData, trendsSort, sortData]);
 
     const clickDeclines = useMemo(() => {
@@ -277,7 +274,7 @@ export default function ReportView() {
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
-                                        activeIndex={activeTrendPie}
+                                        {...{ activeIndex: activeTrendPie } as any}
                                         activeShape={renderActiveShape}
                                         data={trendPieData}
                                         cx="50%" cy="50%"
@@ -323,7 +320,7 @@ export default function ReportView() {
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
-                                        activeIndex={activeMovementPie}
+                                        {...{ activeIndex: activeMovementPie } as any}
                                         activeShape={renderActiveShape}
                                         data={movementPieData}
                                         cx="50%" cy="50%"

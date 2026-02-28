@@ -1,13 +1,22 @@
-import React, { useState, useMemo } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext } from 'react-router-dom';
+import React, { useState, useMemo, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext, Navigate } from 'react-router-dom';
 import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, Filter, FileText, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import axios from 'axios';
+
 import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie, Sector } from 'recharts';
 import ReportView from './ReportView';
-
-axios.defaults.baseURL = 'http://localhost:3001';
+import {
+  clearData,
+  parseCSVContent,
+  loadFromCache,
+  getDataStatus,
+  getDataInfo,
+  getTags,
+  getPositionsHistory,
+  getTopMovers,
+  getTagSummary
+} from './dataStore';
 
 const queryClient = new QueryClient();
 
@@ -53,11 +62,37 @@ export function SortableHeader({
 
 const Layout = () => {
   const location = useLocation();
-  const [dateFrom, setDateFrom] = useState('2025-05-15');
-  const [dateTo, setDateTo] = useState('2025-08-15');
+  const [dateFrom, setDateFrom] = useState(() => {
+    // If the data is fully loaded via the app store we could fetch it directly
+    // Wait for the render loop to set real dates
+    return '2025-08-01'; // Fallback default
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [resetKey, setResetKey] = useState(0);
+
+  const handleResetFilters = () => {
+    const d = new Date();
+    setDateTo(d.toISOString().split('T')[0]);
+    d.setDate(d.getDate() - 90);
+    setDateFrom(d.toISOString().split('T')[0]);
+    setResetKey(prev => prev + 1); // Remounts children to clear local table filters
+  };
+
+  const handleStartNewAnalysis = async () => {
+    if (window.confirm("Are you sure you want to start a new analysis? The current dataset will be completely wiped from memory.")) {
+      // Temporarily remove beforeunload to allow reload without warning
+      window.onbeforeunload = null;
+      try {
+        clearData();
+        window.location.href = '/';
+      } catch (e) {
+        console.error("Failed to clear data", e);
+      }
+    }
+  };
 
   const navigation = [
-    { name: 'SEO Report', href: '/', icon: FileText },
+    { name: 'SEO Report', href: '/seo-overview', icon: FileText },
     { name: 'Dashboard', href: '/dashboard', icon: Activity },
     { name: 'Trends', href: '/trends', icon: TrendingUp },
     { name: 'Movers', href: '/movers', icon: ArrowUpRight },
@@ -129,19 +164,33 @@ const Layout = () => {
               <button
                 key={preset.label}
                 onClick={() => {
-                  const baseDate = new Date('2025-08-15T00:00:00Z');
+                  const baseDate = new Date();
                   if (preset.days === 0) {
                     setDateFrom('2023-07-18');
                   } else {
                     setDateFrom(new Date(baseDate.getTime() - preset.days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
                   }
-                  setDateTo('2025-08-15');
+                  setDateTo(baseDate.toISOString().split('T')[0]);
                 }}
                 className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
               >
                 {preset.label}
               </button>
             ))}
+          </div>
+          <div className="pt-4 border-t border-gray-200 mt-4 space-y-2">
+            <button
+              onClick={handleResetFilters}
+              className="w-full flex justify-center items-center px-4 py-2 text-sm font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+            >
+              Reset All Filters
+            </button>
+            <button
+              onClick={handleStartNewAnalysis}
+              className="w-full flex justify-center items-center px-4 py-2 text-sm font-medium rounded-md text-red-700 bg-red-50 hover:bg-red-100 transition-colors"
+            >
+              Clear & Start New
+            </button>
           </div>
         </div>
       </div>
@@ -158,7 +207,7 @@ const Layout = () => {
         </header>
         <main className="flex-1 overflow-y-auto p-8">
           <div className="max-w-7xl mx-auto">
-            <Outlet context={{ dateFrom, dateTo, setDateFrom, setDateTo } satisfies AppContextType} />
+            <Outlet key={resetKey} context={{ dateFrom, dateTo, setDateFrom, setDateTo } satisfies AppContextType} />
           </div>
         </main>
       </div>
@@ -180,15 +229,9 @@ const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
     setUploading(true);
     setError('');
 
-    const formData = new FormData();
-    formData.append('file', acceptedFiles[0]);
-
     try {
-      await axios.post('/api/upload-csv', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
+      const text = await acceptedFiles[0].text();
+      parseCSVContent(text);
       onDataLoaded();
     } catch (e: any) {
       setError(e.response?.data?.error || e.message);
@@ -209,8 +252,19 @@ const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
     setUploading(true);
     setError('');
 
+    let fetchUrl = url;
+    if (url.includes('docs.google.com/spreadsheets')) {
+      const matches = url.match(/\/d\/(.*?)(\/|$)/);
+      if (matches && matches[1]) {
+        fetchUrl = `https://docs.google.com/spreadsheets/d/${matches[1]}/export?format=csv`;
+      }
+    }
+
     try {
-      await axios.post('/api/upload-csv-url', { url });
+      const response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error("Failed to fetch sheet. Check permissions or URL.");
+      const text = await response.text();
+      parseCSVContent(text);
       onDataLoaded();
     } catch (e: any) {
       setError(e.response?.data?.error || e.message);
@@ -296,10 +350,26 @@ const ProtectedLayout = () => {
   const { data: status, isLoading, refetch } = useQuery({
     queryKey: ['data-status'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/data-status');
-      return data;
+      let currentStatus = getDataStatus();
+      if (!currentStatus.loaded) {
+        if (loadFromCache()) {
+          currentStatus = getDataStatus();
+        }
+      }
+      return currentStatus;
     },
   });
+
+  useEffect(() => {
+    if (!status?.loaded) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [status?.loaded]);
 
   if (isLoading) {
     return (
@@ -329,18 +399,14 @@ const Dashboard = () => {
   const { data: info } = useQuery({
     queryKey: ['data-info'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/data-info');
-      return data;
+      return getDataInfo();
     },
   });
 
   const { data: historyData } = useQuery({
     queryKey: ['positions-history-dashboard', dateFrom, dateTo],
     queryFn: async () => {
-      const { data } = await axios.get('/api/positions-history', {
-        params: { date_from: dateFrom, date_to: dateTo, limit: 500 }
-      });
-      return data;
+      return getPositionsHistory({ date_from: dateFrom, date_to: dateTo, limit: 500 });
     },
   });
 
@@ -416,28 +482,24 @@ const TrendsComponent = ({
   const { data: tags } = useQuery({
     queryKey: ['tags'],
     queryFn: async () => {
-      const { data } = await axios.get('/api/tags');
-      return data;
+      return getTags();
     },
   });
 
   const { data: historyData, isLoading } = useQuery({
     queryKey: ['positions-history', dateFrom, dateTo, selectedTag, keywordSearch, page, sortConfig, filterType],
     queryFn: async () => {
-      const { data } = await axios.get('/api/positions-history', {
-        params: {
-          date_from: dateFrom,
-          date_to: dateTo,
-          tag: selectedTag,
-          keyword_search: keywordSearch,
-          page,
-          limit: 10,
-          sort: sortConfig.key,
-          order: sortConfig.dir,
-          filter_type: filterType,
-        }
+      return getPositionsHistory({
+        date_from: dateFrom,
+        date_to: dateTo,
+        tag: selectedTag,
+        keyword_search: keywordSearch,
+        page,
+        limit: 10,
+        sort: sortConfig.key,
+        order: sortConfig.dir,
+        filter_type: filterType,
       });
-      return data;
     },
   });
 
@@ -661,20 +723,14 @@ const MoversView = () => {
   const { data: moversData, isLoading } = useQuery({
     queryKey: ['top-movers', dateFrom, dateTo, direction],
     queryFn: async () => {
-      const { data } = await axios.get('/api/top-movers', {
-        params: { date_from: dateFrom, date_to: dateTo, direction, limit: 30 }
-      });
-      return data;
+      return getTopMovers({ date_from: dateFrom, date_to: dateTo, direction, limit: 30 });
     },
   });
 
   const { data: historyData } = useQuery({
     queryKey: ['positions-history-movers', dateFrom, dateTo],
     queryFn: async () => {
-      const { data } = await axios.get('/api/positions-history', {
-        params: { date_from: dateFrom, date_to: dateTo, limit: 500 }
-      });
-      return data;
+      return getPositionsHistory({ date_from: dateFrom, date_to: dateTo, limit: 500 });
     },
   });
 
@@ -692,8 +748,8 @@ const MoversView = () => {
         av = a[sortConfig.key];
         bv = b[sortConfig.key];
       } else {
-        av = a.metrics?.[sortConfig.key] ?? 0;
-        bv = b.metrics?.[sortConfig.key] ?? 0;
+        av = (a.metrics as any)?.[sortConfig.key] ?? 0;
+        bv = (b.metrics as any)?.[sortConfig.key] ?? 0;
       }
       const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av as number) - (bv as number);
       return sortConfig.dir === 'asc' ? cmp : -cmp;
@@ -895,10 +951,7 @@ const TagsView = () => {
   const { data: tagData, isLoading } = useQuery({
     queryKey: ['tag-summary', dateFrom, dateTo],
     queryFn: async () => {
-      const { data } = await axios.get('/api/tag-summary', {
-        params: { date_from: dateFrom, date_to: dateTo }
-      });
-      return data;
+      return getTagSummary({ date_from: dateFrom, date_to: dateTo });
     },
   });
 
@@ -911,8 +964,8 @@ const TagsView = () => {
 
     // sorting
     return [...data].sort((a, b) => {
-      const av = a[sortConfig.key] ?? 0;
-      const bv = b[sortConfig.key] ?? 0;
+      const av = (a as any)[sortConfig.key] ?? 0;
+      const bv = (b as any)[sortConfig.key] ?? 0;
       const cmp = typeof av === 'string' ? av.localeCompare(bv) : (av as number) - (bv as number);
       return sortConfig.dir === 'asc' ? cmp : -cmp;
     });
@@ -1009,7 +1062,7 @@ const TagsView = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    activeIndex={activePie}
+                    {...{ activeIndex: activePie } as any}
                     activeShape={renderActiveShape}
                     data={pieData}
                     cx="50%" cy="50%"
@@ -1087,7 +1140,8 @@ export default function App() {
       <Router>
         <Routes>
           <Route path="/" element={<ProtectedLayout />}>
-            <Route index element={<ReportView />} />
+            <Route index element={<Navigate to="/seo-overview" replace />} />
+            <Route path="seo-overview" element={<ReportView />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="trends" element={<TrendsView />} />
             <Route path="movers" element={<MoversView />} />

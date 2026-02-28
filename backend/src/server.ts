@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import axios from 'axios';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -13,6 +14,10 @@ app.use(cors());
 app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
+
+// Serve frontend static files in production
+const frontendPath = path.join(__dirname, '../../frontend/dist');
+app.use(express.static(frontendPath));
 
 // ---------------------------------------------------------------------------
 // CSV Data Layer
@@ -36,42 +41,90 @@ function parseCSVContent(raw: string): void {
         throw new Error('[CSV] File has no data rows');
     }
 
-    // Parse header to get date columns
-    // Header: Keywords, Tags, Volume, <dates...>, URL in SERP, Expected URL
     const headerLine = lines[0];
-    const headers = parseCSVLine(headerLine);
+    // Remove BOM if present
+    const cleanHeaderLine = headerLine.replace(/^\uFEFF/, '');
+    const headers = parseCSVLine(cleanHeaderLine);
 
-    // Find date columns (between Volume and URL in SERP)
-    const dateStartIdx = 3; // after Keywords, Tags, Volume
-    const dateEndIdx = headers.length - 2; // before URL in SERP, Expected URL
-    ALL_DATES = headers.slice(dateStartIdx, dateEndIdx);
+    const keywordIdx = 0; // Usually first column
 
-    console.log(`[CSV] Found ${ALL_DATES.length} date columns, from ${ALL_DATES[ALL_DATES.length - 1]} to ${ALL_DATES[0]}`);
+    let tagsIdx = headers.findIndex(h => {
+        const lower = h.toLowerCase();
+        return lower.includes('tag') || lower.includes('?rrmn');
+    });
+
+    let searchRegionsIdx = headers.findIndex(h => h.toLowerCase().includes('search region'));
+    let volumeIdx = headers.findIndex(h => h.toLowerCase().includes('volume'));
+    let urlInSerpIdx = headers.findIndex(h => h.toLowerCase().includes('url in serp'));
+    let expectedUrlIdx = headers.findIndex(h => h.toLowerCase().includes('expected url'));
+
+    // Fallbacks
+    if (tagsIdx === -1) tagsIdx = 1;
+    if (volumeIdx === -1) {
+        if (searchRegionsIdx !== -1) volumeIdx = searchRegionsIdx + 1;
+        else volumeIdx = 2;
+    }
+
+    const dateColumns: { name: string, idx: number }[] = [];
+
+    for (let i = 0; i < headers.length; i++) {
+        if (i === keywordIdx || i === tagsIdx || i === searchRegionsIdx || i === volumeIdx || i === urlInSerpIdx || i === expectedUrlIdx) {
+            continue;
+        }
+
+        const h = headers[i].trim();
+        if (!h) continue;
+
+        // Check if it's a date standard format First YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(h)) {
+            dateColumns.push({ name: h, idx: i });
+        } else {
+            // Try JS Date parsing
+            // Also requires avoiding purely numeric column headers that aren't dates
+            // But usually Serpstat headers that are left over are dates.
+            const d = new Date(h);
+            if (!isNaN(d.getTime())) {
+                const formatted = d.toISOString().split('T')[0];
+                dateColumns.push({ name: formatted, idx: i });
+            }
+        }
+    }
+
+    ALL_DATES = Array.from(new Set(dateColumns.map(dc => dc.name))).sort().reverse();
+
+    const oldest = ALL_DATES.length > 0 ? ALL_DATES[ALL_DATES.length - 1] : 'none';
+    const newest = ALL_DATES.length > 0 ? ALL_DATES[0] : 'none';
+    console.log(`[CSV] Found ${ALL_DATES.length} date columns, from ${oldest} to ${newest}`);
 
     // Parse data rows
     const newKeywords: KeywordRecord[] = [];
     for (let i = 1; i < lines.length; i++) {
         const cols = parseCSVLine(lines[i]);
-        if (cols.length < 5) continue;
+        if (cols.length < Math.max(keywordIdx, tagsIdx, volumeIdx)) continue;
 
-        const keyword = cols[0]?.trim() || '';
-        const tagsRaw = cols[1]?.trim() || '';
+        const keyword = cols[keywordIdx]?.trim() || '';
+        const tagsRaw = cols[tagsIdx]?.trim() || '';
         const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0);
-        const volume = parseInt(cols[2]) || 0;
+
+        let volume = 0;
+        if (volumeIdx !== -1 && cols[volumeIdx]) {
+            const volStr = cols[volumeIdx].replace(/,/g, '');
+            volume = parseInt(volStr) || 0;
+        }
 
         const positions: Record<string, number | null> = {};
-        for (let d = 0; d < ALL_DATES.length && (dateStartIdx + d) < cols.length; d++) {
-            const val = cols[dateStartIdx + d]?.trim();
+        for (const dc of dateColumns) {
+            const val = cols[dc.idx]?.trim();
             if (!val || val === 'n/a' || val === '-' || val === '') {
-                positions[ALL_DATES[d]] = null;
+                positions[dc.name] = null;
             } else {
                 const num = parseInt(val);
-                positions[ALL_DATES[d]] = isNaN(num) ? null : num;
+                positions[dc.name] = isNaN(num) ? null : num;
             }
         }
 
-        const urlInSerp = cols[cols.length - 2]?.trim() || '';
-        const expectedUrl = cols[cols.length - 1]?.trim() || '';
+        const urlInSerp = urlInSerpIdx !== -1 ? (cols[urlInSerpIdx]?.trim() || '') : '';
+        const expectedUrl = expectedUrlIdx !== -1 ? (cols[expectedUrlIdx]?.trim() || '') : '';
 
         newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
     }
@@ -111,6 +164,13 @@ function parseCSVLine(line: string): string[] {
 
 app.get('/api/data-status', (_req, res) => {
     res.json({ loaded: KEYWORDS.length > 0, keywordCount: KEYWORDS.length });
+});
+
+app.post('/api/clear-data', (_req, res) => {
+    KEYWORDS = [];
+    ALL_DATES = [];
+    console.log('[CSV] Data cleared by client request');
+    res.json({ success: true });
 });
 
 app.post('/api/upload-csv', upload.single('file'), (req, res) => {
@@ -325,25 +385,25 @@ function assignRankMovement(rankPrev: number | null, rankNow: number | null): st
 
 function buildReportData(queryContains: string, urlContains: string, avgPosMax: number, lastCheckedDays: number): ReportRecord[] {
     // Determine the 90-day periods based on the most recent date in the dataset
-    const sortedDates = ALL_DATES.slice().sort(); // chronological
+    const sortedDates = [...ALL_DATES].sort(); // chronological
+    if (sortedDates.length === 0) return [];
+
+    // Grab the newest available date 
     const newestDate = sortedDates[sortedDates.length - 1];
-    if (!newestDate) return [];
-
     const newestMs = new Date(newestDate).getTime();
-    const day90Ms = 90 * 24 * 60 * 60 * 1000;
 
-    // Last 3 months: [newest - 90 days, newest]
-    const last3moStart = new Date(newestMs - day90Ms).toISOString().split('T')[0];
-    const last3moEnd = newestDate;
+    // To prevent data gaps (e.g., 6.5 month leaps) from generating zero-points in the last "3 months",
+    // we take the newest half of available timeline points as the "latest period",
+    // and the older half as the "previous period".
+    // Alternatively, if we only have 2 points, they map index 1 vs index 0.
+    const halfLen = Math.floor(sortedDates.length / 2);
+    const last3moDates = sortedDates.slice(-halfLen);
 
-    // Previous 3 months: [newest - 180 days, newest - 90 days)
-    const prev3moStart = new Date(newestMs - 2 * day90Ms).toISOString().split('T')[0];
-    const prev3moEnd = last3moStart;
+    // The previous 3m equivalent is just the half prior to the latest half
+    const prevLen = Math.floor((sortedDates.length - halfLen));
+    const prev3moDates = sortedDates.slice(0, prevLen);
 
-    const last3moDates = sortedDates.filter(d => d >= last3moStart && d <= last3moEnd);
-    const prev3moDates = sortedDates.filter(d => d >= prev3moStart && d < prev3moEnd);
-
-    // Last checked cutoff
+    // Last checked cutoff - keep time based to drop absolutely dead keywords
     const lastCheckedCutoff = new Date(newestMs - lastCheckedDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const results: ReportRecord[] = [];
@@ -892,6 +952,16 @@ app.get('/api/keyword/:keyword', (req, res) => {
 // GET /api/dates - available dates
 app.get('/api/dates', (_req, res) => {
     res.json(ALL_DATES.slice().sort());
+});
+
+// ---------------------------------------------------------------------------
+// Catch-All Static Frontend Route
+// ---------------------------------------------------------------------------
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'Endpoint not found' });
+    }
+    res.sendFile(path.join(frontendPath, 'index.html'));
 });
 
 const PORT = process.env.PORT || 3001;

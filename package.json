@@ -1,0 +1,9 @@
+{
+    "name": "terra-serpstat-tracker",
+    "version": "1.0.0",
+    "scripts": {
+        "start": "cd backend && npx tsx src/server.ts",
+        "build": "cd frontend && npm install && npm run build && cd ../backend && npm install",
+        "install-all": "npm run build"
+    }
+}
