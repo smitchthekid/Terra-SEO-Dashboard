@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getSeoReport } from './dataStore';
@@ -6,7 +6,7 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
     PieChart, Pie, Sector,
 } from 'recharts';
-import { Search, ArrowUpDown, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { Search, ArrowUpDown, ChevronDown, ChevronUp, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
 
 type AppContextType = {
     dateFrom: string;
@@ -87,6 +87,18 @@ const renderActiveShape = (props: any) => {
     );
 };
 
+function Pagination({ total, page, limit, onPageChange }: { total: number, page: number, limit: number, onPageChange: (p: number) => void }) {
+    const totalPages = Math.ceil(total / limit);
+    if (totalPages <= 1) return null;
+    return (
+        <div className="p-4 border-t border-gray-200 flex items-center justify-between bg-white mt-1">
+            <button disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="flex items-center px-3 py-1.5 text-sm font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"><ChevronLeft className="w-4 h-4 mr-1" /> Previous</button>
+            <span className="text-sm text-gray-500">Page {page} of {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => onPageChange(page + 1)} className="flex items-center px-3 py-1.5 text-sm font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">Next <ChevronRight className="w-4 h-4 ml-1" /></button>
+        </div>
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Report View Component
 // ---------------------------------------------------------------------------
@@ -101,17 +113,26 @@ export default function ReportView() {
     const [activeTab, setActiveTab] = useState<'trends' | 'declines' | 'gains' | 'combined' | 'categories'>('trends');
 
     // Sort states per table
-    const [trendsSort, setTrendsSort] = useState<SortConfig>({ key: 'click_delta', dir: 'desc' });
+    // Sort states per table
+    const [trendsSort, setTrendsSort] = useState<SortConfig>({ key: 'fpcp_delta', dir: 'desc' });
     const [declinesSort, setDeclinesSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
     const [gainsSort, setGainsSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
     const [combinedSort, setCombinedSort] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
-    const [categoriesSort, setCategoriesSort] = useState<SortConfig>({ key: 'clicks_delta_3mo', dir: 'desc' });
+    const [categoriesSort, setCategoriesSort] = useState<SortConfig>({ key: 'fpcp_delta', dir: 'desc' });
 
     // Pie chart filter state
     const [activeTrendPie, setActiveTrendPie] = useState<number>(0);
     const [activeMovementPie, setActiveMovementPie] = useState<number>(0);
     const [selectedTrendBucket, setSelectedTrendBucket] = useState<string | null>(null);
     const [selectedMovement, setSelectedMovement] = useState<string | null>(null);
+
+    // Pagination state
+    const [page, setPage] = useState(1);
+    const limit = 50;
+
+    useEffect(() => {
+        setPage(1);
+    }, [activeTab, queryContains, urlContains, trendsSort, declinesSort, gainsSort, combinedSort, categoriesSort, selectedTrendBucket, selectedMovement, avgPosMax]);
 
     const { data: reportData, isLoading } = useQuery({
         queryKey: ['seo-report', queryContains, urlContains, avgPosMax],
@@ -185,7 +206,7 @@ export default function ReportView() {
     const rankTrendsBarData = useMemo(() => {
         return (reportData?.rankTrendsVisual || []).map((r: any) => ({
             category: r.category,
-            clicks_delta: r.clicks_delta,
+            fpcp_delta: r.fpcp_delta,
         }));
     }, [reportData]);
 
@@ -212,9 +233,9 @@ export default function ReportView() {
         <div className="space-y-6">
             {/* Title */}
             <div>
-                <h2 className="text-2xl font-bold text-gray-900 tracking-tight">90-Day SEO Performance Report</h2>
+                <h2 className="text-2xl font-bold text-gray-900 tracking-tight">SEO Performance Report</h2>
                 <p className="text-sm text-gray-500 mt-1">
-                    Comparing last 3 months vs. previous 3 months | Filtered to queries with rank data within last 30 days
+                    Comparing {reportData?.metadata?.newestDate ? `${reportData?.metadata?.newestDate} vs. ${reportData?.metadata?.previousDate} (${reportData?.metadata?.daysInterval} days interval)` : 'latest periods'} | Filtered to queries with rank data within last 30 days
                     {top.total_records !== undefined && <span className="ml-2 font-medium text-indigo-600">({top.total_records} queries)</span>}
                 </p>
             </div>
@@ -260,9 +281,9 @@ export default function ReportView() {
 
             {/* Top KPI Cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                <KpiCard label="Click Delta" value={fmtDelta(top.click_delta)} color={top.click_delta >= 0 ? 'emerald' : 'red'} sub="Est. click change" />
-                <KpiCard label="Clicks (Last 3mo)" value={fmtNum(top.clicks_last_3mo)} color="blue" sub="CTR-estimated" />
-                <KpiCard label="Clicks (Prev 3mo)" value={fmtNum(top.clicks_prev_3mo)} color="slate" sub="CTR-estimated" />
+                <KpiCard label="FPCP Delta" value={fmtDelta(top.fpcp_delta)} color={top.fpcp_delta >= 0 ? 'emerald' : 'red'} sub="1st Page Potential" />
+                <KpiCard label="FPCP (Now)" value={fmtNum(top.fpcp_now)} color="indigo" sub="Current period" />
+                <KpiCard label="FPCP (Prev)" value={fmtNum(top.fpcp_was)} color="slate" sub="Previous period" />
                 <KpiCard label="Rank Delta" value={fmtDelta(top.rank_delta, 2)} color={top.rank_delta <= 0 ? 'emerald' : 'red'} sub="Avg rank change" />
                 <KpiCard label="Avg Rank Was" value={fmtNum(top.avg_rank_was, 1)} color="slate" sub="Previous period" />
                 <KpiCard label="Avg Rank Now" value={fmtNum(top.avg_rank_now, 1)} color="indigo" sub="Current period" />
@@ -365,7 +386,7 @@ export default function ReportView() {
 
             {/* Rank Trends by Total Clicks Gained/Lost */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-                <h3 className="text-base font-semibold text-gray-900 mb-4">Rank Trends by Total Est. Clicks Gained/Lost</h3>
+                <h3 className="text-base font-semibold text-gray-900 mb-4">Rank Trends by First Page Click Potential (FPCP)</h3>
                 {rankTrendsBarData.length > 0 ? (
                     <ResponsiveContainer width="100%" height={260}>
                         <BarChart data={rankTrendsBarData} layout="vertical" margin={{ top: 5, right: 30, left: 120, bottom: 5 }}>
@@ -373,9 +394,9 @@ export default function ReportView() {
                             <XAxis type="number" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
                             <YAxis type="category" dataKey="category" tick={{ fontSize: 12, fill: '#374151' }} width={120} axisLine={false} tickLine={false} />
                             <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                            <Bar dataKey="clicks_delta" name="Est. Clicks Delta" radius={[0, 4, 4, 0]}>
+                            <Bar dataKey="fpcp_delta" name="FPCP Delta" radius={[0, 4, 4, 0]}>
                                 {rankTrendsBarData.map((entry: any, i: number) => (
-                                    <Cell key={i} fill={entry.clicks_delta >= 0 ? '#10b981' : '#ef4444'} />
+                                    <Cell key={i} fill={entry.fpcp_delta >= 0 ? '#10b981' : '#ef4444'} />
                                 ))}
                             </Bar>
                         </BarChart>
@@ -421,14 +442,14 @@ export default function ReportView() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <SortableHeader label="Trend" sortKey="trend" current={trendsSort} onSort={toggleSort(setTrendsSort)} />
-                                    <SortableHeader label="Click Delta" sortKey="click_delta" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
+                                    <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
                                     <SortableHeader label="Rank Was" sortKey="rank_was" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
                                     <SortableHeader label="Count" sortKey="count" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {trends.map((row: any, i: number) => {
+                                {trends.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
                                     const isSelected = row.trend === selectedTrendBucket;
                                     return (
                                         <tr
@@ -442,8 +463,8 @@ export default function ReportView() {
                                                     <span className="font-semibold text-gray-900">{row.trend}</span>
                                                 </span>
                                             </td>
-                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.click_delta > 0 ? 'text-emerald-600' : row.click_delta < 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                                                {fmtDelta(row.click_delta)}
+                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.fpcp_delta > 0 ? 'text-emerald-600' : row.fpcp_delta < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                                                {fmtDelta(row.fpcp_delta)}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_now, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_was, 1)}</td>
@@ -453,6 +474,7 @@ export default function ReportView() {
                                 })}
                             </tbody>
                         </table>
+                        <Pagination total={trends.length} page={page} limit={limit} onPageChange={setPage} />
                     </div>
                 )}
 
@@ -464,15 +486,14 @@ export default function ReportView() {
                                 <tr>
                                     <SortableHeader label="Query" sortKey="query" current={declinesSort} onSort={toggleSort(setDeclinesSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
-                                    <SortableHeader label="Click Delta" sortKey="click_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
-                                    <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
+                                    <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Delta" sortKey="rank_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Was" sortKey="rank_was" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {clickDeclines.slice(0, 100).map((row: any, i: number) => {
+                                {clickDeclines.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
                                     const isSelected = row.query === queryContains;
                                     return (
                                         <tr
@@ -482,8 +503,7 @@ export default function ReportView() {
                                         >
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
-                                            <td className="px-4 py-3 text-sm font-bold text-red-600 text-right">{fmtDelta(row.click_delta)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(row.impressions_delta)}</td>
+                                            <td className="px-4 py-3 text-sm font-bold text-red-600 text-right">{fmtDelta(row.fpcp_delta)}</td>
                                             <td className={`px-4 py-3 text-sm font-medium text-right ${row.rank_delta > 0 ? 'text-red-600' : row.rank_delta < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.rank_delta, 1)}
                                             </td>
@@ -496,8 +516,7 @@ export default function ReportView() {
                                 {reportData?.declinesTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
                                         <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.declinesTotal.count})</td>
-                                        <td className="px-4 py-3 text-sm text-red-700 text-right">{fmtDelta(reportData.declinesTotal.click_delta)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.declinesTotal.impressions_delta)}</td>
+                                        <td className="px-4 py-3 text-sm text-red-700 text-right">{fmtDelta(reportData.declinesTotal.fpcp_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.declinesTotal.rank_delta, 2)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.declinesTotal.rank_was, 1)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.declinesTotal.rank_now, 1)}</td>
@@ -505,6 +524,7 @@ export default function ReportView() {
                                 )}
                             </tbody>
                         </table>
+                        <Pagination total={clickDeclines.length} page={page} limit={limit} onPageChange={setPage} />
                     </div>
                 )}
 
@@ -516,15 +536,14 @@ export default function ReportView() {
                                 <tr>
                                     <SortableHeader label="Query" sortKey="query" current={gainsSort} onSort={toggleSort(setGainsSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
-                                    <SortableHeader label="Click Delta" sortKey="click_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
+                                    <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Pos. Gained" sortKey="positions_gained" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
-                                    <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Rank Was" sortKey="rank_was" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {clickGains.slice(0, 100).map((row: any, i: number) => {
+                                {clickGains.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
                                     const isSelected = row.query === queryContains;
                                     return (
                                         <tr
@@ -534,9 +553,8 @@ export default function ReportView() {
                                         >
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
-                                            <td className="px-4 py-3 text-sm font-bold text-emerald-600 text-right">{fmtDelta(row.click_delta)}</td>
+                                            <td className="px-4 py-3 text-sm font-bold text-emerald-600 text-right">{fmtDelta(row.fpcp_delta)}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-emerald-600 text-right">{fmtDelta(row.positions_gained, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(row.impressions_delta)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_was, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(row.rank_now, 1)}</td>
                                         </tr>
@@ -546,15 +564,15 @@ export default function ReportView() {
                                 {reportData?.gainsTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
                                         <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.gainsTotal.count})</td>
-                                        <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.click_delta)}</td>
+                                        <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.fpcp_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.positions_gained, 2)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.gainsTotal.impressions_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.gainsTotal.rank_was, 1)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.gainsTotal.rank_now, 1)}</td>
                                     </tr>
                                 )}
                             </tbody>
                         </table>
+                        <Pagination total={clickGains.length} page={page} limit={limit} onPageChange={setPage} />
                     </div>
                 )}
 
@@ -567,15 +585,14 @@ export default function ReportView() {
                                     <SortableHeader label="URL" sortKey="canonical_url" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
                                     <SortableHeader label="Query" sortKey="query" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
-                                    <SortableHeader label="Click Delta" sortKey="click_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
-                                    <SortableHeader label="Impress. Delta" sortKey="impressions_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
+                                    <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Rank Delta" sortKey="rank_delta" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Rank Was" sortKey="rank_was" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {queryUrlCombined.slice(0, 100).map((row: any, i: number) => {
+                                {queryUrlCombined.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
                                     const isSelected = row.query === queryContains;
                                     return (
                                         <tr
@@ -596,10 +613,9 @@ export default function ReportView() {
                                             </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[200px] truncate" title={row.query}>{row.query}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
-                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.click_delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                {fmtDelta(row.click_delta)}
+                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.fpcp_delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                {fmtDelta(row.fpcp_delta)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(row.impressions_delta)}</td>
                                             <td className={`px-4 py-3 text-sm font-medium text-right ${row.rank_delta > 0 ? 'text-red-600' : row.rank_delta < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.rank_delta, 1)}
                                             </td>
@@ -612,8 +628,7 @@ export default function ReportView() {
                                 {reportData?.combinedTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
                                         <td className="px-4 py-3 text-sm text-gray-900" colSpan={3}>Grand Total ({reportData.combinedTotal.count})</td>
-                                        <td className="px-4 py-3 text-sm text-gray-900 text-right">{fmtDelta(reportData.combinedTotal.click_delta)}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.combinedTotal.impressions_delta)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900 text-right">{fmtDelta(reportData.combinedTotal.fpcp_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.combinedTotal.rank_delta, 2)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.combinedTotal.rank_was, 1)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.combinedTotal.rank_now, 1)}</td>
@@ -621,6 +636,7 @@ export default function ReportView() {
                                 )}
                             </tbody>
                         </table>
+                        <Pagination total={queryUrlCombined.length} page={page} limit={limit} onPageChange={setPage} />
                     </div>
                 )}
 
@@ -631,14 +647,14 @@ export default function ReportView() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     <SortableHeader label="Category" sortKey="query_category" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} />
-                                    <SortableHeader label="Click Delta" sortKey="clicks_delta_3mo" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
-                                    <SortableHeader label="Rank Now" sortKey="rank_last_3mo" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
-                                    <SortableHeader label="Rank Was" sortKey="rank_prev_3mo" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
+                                    <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
+                                    <SortableHeader label="Rank Now" sortKey="rank_now" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
+                                    <SortableHeader label="Rank Was" sortKey="rank_was" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
                                     <SortableHeader label="Count" sortKey="count" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {categoryTrends.map((row: any, i: number) => {
+                                {categoryTrends.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
                                     const isSelected = row.query_category === queryContains;
                                     return (
                                         <tr
@@ -647,17 +663,18 @@ export default function ReportView() {
                                             className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
                                         >
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900">{row.query_category}</td>
-                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.clicks_delta_3mo > 0 ? 'text-emerald-600' : row.clicks_delta_3mo < 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                                                {fmtDelta(row.clicks_delta_3mo)}
+                                            <td className={`px-4 py-3 text-sm font-bold text-right ${row.fpcp_delta > 0 ? 'text-emerald-600' : row.fpcp_delta < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                                                {fmtDelta(row.fpcp_delta)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_last_3mo, 1)}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_prev_3mo, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_now, 1)}</td>
+                                            <td className="px-4 py-3 text-sm text-gray-700 font-medium text-right">{fmtRank(row.rank_was, 1)}</td>
                                             <td className="px-4 py-3 text-sm text-gray-700 font-bold text-right">{row.count}</td>
                                         </tr>
                                     );
                                 })}
                             </tbody>
                         </table>
+                        <Pagination total={categoryTrends.length} page={page} limit={limit} onPageChange={setPage} />
                     </div>
                 )}
             </div>

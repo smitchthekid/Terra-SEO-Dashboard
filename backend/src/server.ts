@@ -666,6 +666,97 @@ app.get('/api/seo-report', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// High Impact Items API
+// ---------------------------------------------------------------------------
+
+app.get('/api/high-impact-items', (req, res) => {
+    try {
+        if (ALL_DATES.length === 0) return res.json([]);
+        const newestDate = ALL_DATES[0];
+
+        // Find date closest to 90 days ago
+        const newestMs = new Date(newestDate).getTime();
+        const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+        let prev90Date = ALL_DATES[ALL_DATES.length - 1];
+        let minDiff = Infinity;
+        for (const d of ALL_DATES) {
+            const diff = Math.abs(new Date(d).getTime() - (newestMs - ninetyDaysMs));
+            if (diff < minDiff) {
+                minDiff = diff;
+                prev90Date = d;
+            }
+        }
+
+        const items = KEYWORDS.map(kw => {
+            const currentRank = kw.positions[newestDate];
+            const prevRank = kw.positions[prev90Date];
+
+            const validHistory = ALL_DATES.map(d => kw.positions[d]).filter((v): v is number => v !== null && v !== undefined && !Number.isNaN(v) && v !== 0);
+
+            let histAvg: number | null = null;
+            let histMin: number | null = null;
+            let histMax: number | null = null;
+
+            if (validHistory.length > 0) {
+                histAvg = parseFloat((validHistory.reduce((a, b) => a + b, 0) / validHistory.length).toFixed(2));
+                histMin = Math.min(...validHistory);
+                histMax = Math.round(Math.max(...validHistory));
+            }
+
+            let visibilityLoss = '';
+            if (prevRank !== null && prevRank !== undefined && currentRank !== null && currentRank !== undefined) {
+                if (prevRank <= 5 && currentRank >= 6) visibilityLoss = 'Lost Top 5';
+                else if (prevRank <= 10 && currentRank >= 11) visibilityLoss = 'Lost Top 10';
+            }
+
+            let powerScore: number | null = null;
+            if (kw.keyword?.trim() !== '') {
+                if (kw.volume <= 0) {
+                    powerScore = 0;
+                } else if (currentRank !== null && currentRank !== undefined) {
+                    const logVolume = Math.log10(kw.volume);
+                    const multiplier = currentRank < 11 ? 10 : (21 - currentRank);
+                    powerScore = parseFloat((logVolume * multiplier).toFixed(2));
+                }
+            }
+
+            let impactScore = 0;
+            if (currentRank !== null && currentRank !== undefined && currentRank < 11 && kw.volume > 0) {
+                // greatest impact: highest volume + lowest rank
+                impactScore = parseFloat((kw.volume / currentRank).toFixed(2));
+            }
+
+            return {
+                keyword: kw.keyword,
+                volume: kw.volume,
+                currentRank,
+                previous90dRank: prevRank,
+                visibilityLoss,
+                powerScore,
+                impactScore,
+                histAvg,
+                histMin,
+                histMax,
+                impactImproved: kw.volume > 0 && powerScore !== null && powerScore > 20 ? 'High Impact' : '',
+                lowVolume: kw.volume === 0 ? 'Low Search Volume' : '',
+            };
+        });
+
+        // Top N inspection requirement based on impact score
+        items.sort((a, b) => b.impactScore - a.impactScore);
+
+        const finalItems = items.map((item, idx) => ({
+            ...item,
+            inspectionRequired: idx < 50 && item.impactScore > 0
+        }));
+
+        res.json(finalItems);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // API Endpoints
 // ---------------------------------------------------------------------------
 

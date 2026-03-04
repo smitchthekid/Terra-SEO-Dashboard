@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext, Navigate } from 'react-router-dom';
-import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 
 import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie, Sector } from 'recharts';
 import ReportView from './ReportView';
+import { HighImpactView } from './HighImpactView';
 import {
   clearData,
   parseCSVContent,
@@ -13,9 +14,10 @@ import {
   getDataStatus,
   getDataInfo,
   getTags,
-  getPositionsHistory,
   getTopMovers,
-  getTagSummary
+  getTagSummary,
+  getPositionsHistory,
+  ALL_DATES
 } from './dataStore';
 
 const queryClient = new QueryClient();
@@ -63,19 +65,28 @@ export function SortableHeader({
 const Layout = () => {
   const location = useLocation();
   const [dateFrom, setDateFrom] = useState(() => {
-    // If the data is fully loaded via the app store we could fetch it directly
-    // Wait for the render loop to set real dates
-    return '2025-08-01'; // Fallback default
+    if (ALL_DATES.length > 1) {
+      const sorted = [...ALL_DATES].sort();
+      return sorted[sorted.length - 2];
+    }
+    return ALL_DATES[0] || '2025-08-01';
   });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(() => {
+    if (ALL_DATES.length > 0) {
+      const sorted = [...ALL_DATES].sort();
+      return sorted[sorted.length - 1];
+    }
+    return new Date().toISOString().split('T')[0];
+  });
   const [resetKey, setResetKey] = useState(0);
 
   const handleResetFilters = () => {
-    const d = new Date();
-    setDateTo(d.toISOString().split('T')[0]);
-    d.setDate(d.getDate() - 90);
-    setDateFrom(d.toISOString().split('T')[0]);
-    setResetKey(prev => prev + 1); // Remounts children to clear local table filters
+    if (ALL_DATES.length > 1) {
+      const sorted = [...ALL_DATES].sort();
+      setDateFrom(sorted[sorted.length - 2]);
+      setDateTo(sorted[sorted.length - 1]);
+    }
+    setResetKey(prev => prev + 1);
   };
 
   const handleStartNewAnalysis = async () => {
@@ -98,6 +109,7 @@ const Layout = () => {
     { name: 'Movers', href: '/movers', icon: ArrowUpRight },
     { name: 'Biggest Declines', href: '/declines', icon: ArrowDownRight },
     { name: 'Biggest Improvements', href: '/improvements', icon: ArrowUpRight },
+    { name: 'High Impact Items', href: '/high-impact-items', icon: AlertTriangle },
     { name: 'Rank First Page', href: '/first-page', icon: FileText },
     { name: 'Rank Top 3', href: '/top-3', icon: FileText },
     { name: 'Product Categories', href: '/tags', icon: Users },
@@ -137,46 +149,27 @@ const Layout = () => {
         <div className="p-4 border-t border-gray-200 space-y-3">
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">From</label>
-            <input
-              type="date"
+            <select
               value={dateFrom}
               onChange={e => setDateFrom(e.target.value)}
               className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-            />
+            >
+              {[...new Set(ALL_DATES)].sort().map(date => (
+                <option key={`from-${date}`} value={date}>{date}</option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">To</label>
-            <input
-              type="date"
+            <select
               value={dateTo}
               onChange={e => setDateTo(e.target.value)}
               className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {[
-              { label: '30d', days: 30 },
-              { label: '90d', days: 90 },
-              { label: '6mo', days: 180 },
-              { label: '1yr', days: 365 },
-              { label: 'All', days: 0 },
-            ].map(preset => (
-              <button
-                key={preset.label}
-                onClick={() => {
-                  const baseDate = new Date();
-                  if (preset.days === 0) {
-                    setDateFrom('2023-07-18');
-                  } else {
-                    setDateFrom(new Date(baseDate.getTime() - preset.days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
-                  }
-                  setDateTo(baseDate.toISOString().split('T')[0]);
-                }}
-                className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-600 hover:bg-indigo-100 hover:text-indigo-700 transition-colors"
-              >
-                {preset.label}
-              </button>
-            ))}
+            >
+              {[...new Set(ALL_DATES)].sort().map(date => (
+                <option key={`to-${date}`} value={date}>{date}</option>
+              ))}
+            </select>
           </div>
           <div className="pt-4 border-t border-gray-200 mt-4 space-y-2">
             <button
@@ -220,9 +213,17 @@ const Layout = () => {
 // ---------------------------------------------------------------------------
 
 const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
-  const [url, setUrl] = useState('');
+  const defaultUrl = 'https://docs.google.com/spreadsheets/d/1Le3C8yQFuWIicJ2Y3f-qUJ_Xpxdod74WKhWK9kmZuts/edit?usp=sharing';
+  const [url, setUrl] = useState(defaultUrl);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+
+  // Auto-fetch for testing purposes
+  useEffect(() => {
+    if (url === defaultUrl && !uploading) {
+      handleUrlSubmit({ preventDefault: () => { } } as React.FormEvent);
+    }
+  }, []); // Run once on mount
 
   const onDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
@@ -397,9 +398,14 @@ const Dashboard = () => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
 
   const { data: info } = useQuery({
-    queryKey: ['data-info'],
+    queryKey: ['data-info', dateFrom, dateTo],
     queryFn: async () => {
-      return getDataInfo();
+      const baseInfo = getDataInfo();
+      const summary = getTagSummary({ date_from: dateFrom, date_to: dateTo });
+      return {
+        ...baseInfo,
+        tagSummary: summary.data,
+      };
     },
   });
 
@@ -412,7 +418,7 @@ const Dashboard = () => {
 
   const movers = historyData?.movers || { raised: 0, dropped: 0, unchanged: 0, noData: 0 };
 
-  const topTags = info?.tags?.slice(0, 8) || [];
+  const topTags = info?.tagSummary?.slice(0, 8) || [];
 
   return (
     <div className="space-y-6">
@@ -444,12 +450,24 @@ const Dashboard = () => {
         <p className="text-sm text-gray-500 mb-4">
           {info?.dateRange?.from} to {info?.dateRange?.to} -- {info?.totalDates} check-in dates
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {topTags.map((t: any) => (
-            <div key={t.tag} className="border border-gray-100 rounded-lg p-3 text-center hover:border-indigo-200 transition-colors">
-              <div className="text-sm font-semibold text-gray-700 truncate" title={t.tag}>{t.tag}</div>
-              <div className="text-lg font-bold text-indigo-600 mt-1">{t.count}</div>
-              <div className="text-xs text-gray-400">keywords</div>
+            <div key={t.tag} className="bg-white border border-gray-100 rounded-xl p-4 flex flex-col items-center text-center shadow-sm hover:border-indigo-200 hover:shadow-md transition-all">
+              <div className="text-sm font-semibold text-gray-800 truncate w-full mb-3" title={t.tag}>{t.tag}</div>
+              <div className="flex w-full justify-around items-center">
+                <div className="flex flex-col items-center">
+                  <div className="text-lg font-bold text-gray-900">{t.totalVolume.toLocaleString()}</div>
+                  <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mt-1">Vol</div>
+                </div>
+                <div className="w-px h-8 bg-gray-100 mx-2"></div>
+                <div className="flex flex-col items-center">
+                  <div className={`flex items-center text-lg font-bold ${t.totalNetChange > 0 ? 'text-emerald-500' : t.totalNetChange < 0 ? 'text-red-500' : 'text-gray-500'}`}>
+                    {t.totalNetChange > 0 ? <ArrowUpRight className="w-4 h-4 mr-0.5" /> : t.totalNetChange < 0 ? <ArrowDownRight className="w-4 h-4 mr-0.5" /> : <Minus className="w-4 h-4 mr-0.5" />}
+                    {Math.abs(t.totalNetChange || 0)}
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mt-1">Net Rank</div>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -524,6 +542,7 @@ const TrendsComponent = ({
   }, [historyData]);
 
   const colors = ["#4f46e5", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
+  const customPieColors = ["#002b3d", "#00425c", "#005978", "#007399", "#008cba", "#00a6db", "#33ccff"];
   const pagination = historyData?.pagination;
 
   const tagPieData = useMemo(() => {
@@ -584,8 +603,12 @@ const TrendsComponent = ({
                   <Pie
                     data={tagPieData}
                     cx="50%" cy="50%"
-                    innerRadius={55} outerRadius={85}
+                    innerRadius={0} outerRadius={75}
                     dataKey="value"
+                    stroke="#ffffff"
+                    strokeWidth={2}
+                    labelLine={{ stroke: '#9ca3af', strokeWidth: 1 }}
+                    label={({ name, percent }: any) => `${name} (${(percent * 100).toFixed(0)}%)`}
                     onClick={(_: any, index: number) => {
                       const name = tagPieData[index]?.name;
                       if (name === 'Other') return;
@@ -597,7 +620,7 @@ const TrendsComponent = ({
                     {tagPieData.map((entry: any, i: number) => (
                       <Cell
                         key={`cell-${i}`}
-                        fill={colors[i % colors.length]}
+                        fill={customPieColors[i % customPieColors.length]}
                         opacity={selectedTag && selectedTag !== entry.name ? 0.3 : 1}
                       />
                     ))}
@@ -1193,6 +1216,7 @@ export default function App() {
             <Route path="movers" element={<MoversView />} />
             <Route path="declines" element={<DeclinesView />} />
             <Route path="improvements" element={<ImprovementsView />} />
+            <Route path="high-impact-items" element={<HighImpactView />} />
             <Route path="first-page" element={<FirstPageView />} />
             <Route path="top-3" element={<Top3View />} />
             <Route path="tags" element={<TagsView />} />

@@ -1,0 +1,246 @@
+// Example Code for Power Scoring //
+
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/User Assets/Custom Metrics Integration Instructions.md b/User Assets/Custom Metrics Integration Instructions.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..83840fc079c2c000dc6a221a202c92594dfd3755
+--- /dev/null
++++ b/User Assets/Custom Metrics Integration Instructions.md	
+@@ -0,0 +1,234 @@
++# Custom Metric Integration Instructions (Spreadsheet → App)
++
++This guide translates your spreadsheet logic into implementation-ready rules for the app (backend compute + frontend display/filtering).
++
++## 1) Required Source Fields
++
++For each keyword row, make sure your app has (or can derive) these inputs:
++
++- `keyword` (Spreadsheet `F`)
++- `currentRank` (Spreadsheet `B`)
++- `previous90dRank` (Spreadsheet `C`)
++- `searchVolume` (Spreadsheet `J` or `L`, see open question below)
++- `indexRangeSeries` = historical rank series from `'Index Range'!F:Q` (12 data points in your example)
++
++## 2) Add a Dedicated Metrics Model
++
++Add a calculated metrics object to your keyword output shape:
++
++```ts
++interface CustomKeywordMetrics {
++  histAvg: number | null;
++  histMin: number | null;
++  histMax: number | null;
++  powerScore: number | null;
++  impactImproved: 'High Impact' | '';
++  lowVolume: 'Low Search Volume' | '';
++  visibilityLoss: 'Lost Top 5' | 'Lost Top 10' | '';
++}
++```
++
++## 3) Normalize Historical Inputs (`Index Range` F:Q)
++
++Before calculations, normalize the rank series:
++
++1. Keep only numeric values.
++2. Remove blanks and zero values.
++3. If no valid values remain, return `null` for historical metrics.
++
++```ts
++const validHistory = indexRangeSeries.filter(
++  (v) => typeof v === 'number' && !Number.isNaN(v) && v !== 0
++);
++```
++
++## 4) Implement Metric Formulas
++
++## 4.1 Hist Avg (Column G)
++
++Definition: average of valid numeric values from `'Index Range'!F:Q`.
++
++```ts
++histAvg = validHistory.length
++  ? Number((validHistory.reduce((a, b) => a + b, 0) / validHistory.length).toFixed(2))
++  : null;
++```
++
++## 4.2 Hist Min (Column H)
++
++Definition: best historical rank (lowest numeric value).
++
++```ts
++histMin = validHistory.length ? Math.min(...validHistory) : null;
++```
++
++## 4.3 Hist Max (Column I)
++
++Definition: worst historical rank (highest numeric value), rounded to whole number.
++
++```ts
++histMax = validHistory.length ? Math.round(Math.max(...validHistory)) : null;
++```
++
++## 4.4 Power Score (Column M)
++
++Spreadsheet logic:
++
++- If keyword is blank → blank (`null`)
++- Else if search volume <= 0 → `0`
++- Else:
++  - rank < 11 → `log10(searchVolume) * 10`
++  - rank >= 11 → `log10(searchVolume) * (21 - rank)`
++
++TypeScript equivalent:
++
++```ts
++function computePowerScore(keyword: string, searchVolume: number, currentRank: number): number | null {
++  if (!keyword?.trim()) return null;
++  if (!(searchVolume > 0)) return 0;
++
++  const logVolume = Math.log10(searchVolume);
++  const multiplier = currentRank < 11 ? 10 : (21 - currentRank);
++  return Number((logVolume * multiplier).toFixed(2));
++}
++```
++
++Notes:
++
++- Rank 11–20 gives decreasing positive multiplier.
++- Rank 21 gives `0`.
++- Rank >21 gives negative score (intentional deprioritization).
++
++## 4.5 Impact Improved (Column N)
++
++Spreadsheet logic: `IF(AND(L2 > 0, M2 > 20), "High Impact", "")`
++
++```ts
++impactImproved = searchVolume > 0 && (powerScore ?? 0) > 20 ? 'High Impact' : '';
++```
++
++## 4.6 Low Volume (Column O)
++
++```ts
++lowVolume = searchVolume === 0 ? 'Low Search Volume' : '';
++```
++
++## 4.7 Lost Top 5 / Lost Top 10 (Column P)
++
++Spreadsheet logic:
++
++```text
++IF(AND(previous90dRank <= 6, currentRank >= 5), "Lost Top 5",
++   IF(AND(previous90dRank <= 10, currentRank >= 11), "Lost Top 10", ""))
++```
++
++TypeScript equivalent (preserving your exact thresholds):
++
++```ts
++function computeVisibilityLoss(previous90dRank: number, currentRank: number): 'Lost Top 5' | 'Lost Top 10' | '' {
++  if (previous90dRank <= 6 && currentRank >= 5) return 'Lost Top 5';
++  if (previous90dRank <= 10 && currentRank >= 11) return 'Lost Top 10';
++  return '';
++}
++```
++
++## 5) Single Combined Calculator (Recommended)
++
++```ts
++function computeCustomMetrics(input: {
++  keyword: string;
++  currentRank: number;
++  previous90dRank: number;
++  searchVolume: number;
++  indexRangeSeries: Array<number | null | undefined>;
++}): CustomKeywordMetrics {
++  const validHistory = input.indexRangeSeries.filter(
++    (v): v is number => typeof v === 'number' && !Number.isNaN(v) && v !== 0
++  );
++
++  const histAvg = validHistory.length
++    ? Number((validHistory.reduce((a, b) => a + b, 0) / validHistory.length).toFixed(2))
++    : null;
++  const histMin = validHistory.length ? Math.min(...validHistory) : null;
++  const histMax = validHistory.length ? Math.round(Math.max(...validHistory)) : null;
++
++  const powerScore = computePowerScore(input.keyword, input.searchVolume, input.currentRank);
++  const impactImproved = input.searchVolume > 0 && (powerScore ?? 0) > 20 ? 'High Impact' : '';
++  const lowVolume = input.searchVolume === 0 ? 'Low Search Volume' : '';
++  const visibilityLoss = computeVisibilityLoss(input.previous90dRank, input.currentRank);
++
++  return {
++    histAvg,
++    histMin,
++    histMax,
++    powerScore,
++    impactImproved,
++    lowVolume,
++    visibilityLoss,
++  };
++}
++```
++
++## 6) Backend Integration Steps
++
++1. Add the helper functions in your backend metric pipeline.
++2. Ensure each keyword row carries `previous90dRank`, `currentRank`, `searchVolume`, and `indexRangeSeries`.
++3. Compute `customMetrics` during API response assembly.
++4. Return custom metrics in the same payload used by the report table.
++
++Recommended response shape:
++
++```json
++{
++  "keyword": "example",
++  "currentRank": 12,
++  "previous90dRank": 7,
++  "searchVolume": 5400,
++  "customMetrics": {
++    "histAvg": 10.58,
++    "histMin": 4,
++    "histMax": 16,
++    "powerScore": 22.93,
++    "impactImproved": "High Impact",
++    "lowVolume": "",
++    "visibilityLoss": "Lost Top 10"
++  }
++}
++```
++
++## 7) Frontend Integration Steps
++
++1. Add new columns in the keyword table:
++   - Hist Avg
++   - Hist Min
++   - Hist Max
++   - Power Score
++   - Impact Improved
++   - Low Volume
++   - Lost Top 5 / Lost Top 10
++2. Add filters for:
++   - `impactImproved === 'High Impact'`
++   - `lowVolume === 'Low Search Volume'`
++   - `visibilityLoss !== ''`
++   - `powerScore > 20`
++3. Add sort support for numeric columns (`histAvg`, `histMin`, `histMax`, `powerScore`).
++4. Render negative Power Scores with warning styling (e.g., muted red) to signal low priority.
++
++## 8) Validation Checklist (must pass before rollout)
++
++Use known rows from your spreadsheet as fixtures and verify parity:
++
++- Blank keyword → `powerScore = null`
++- Positive volume, rank 1–10 → `powerScore = log10(volume) * 10`
++- Positive volume, rank 11–20 → multiplier is `21 - rank`
++- Rank 21+ with positive volume → zero or negative power score
++- `searchVolume = 0` → `lowVolume = 'Low Search Volume'`
++- `searchVolume > 0 && powerScore > 20` → `impactImproved = 'High Impact'`
++- Previous <=6 and current >=5 → `Lost Top 5`
++- Previous <=10 and current >=11 → `Lost Top 10`
++
++## 9) Open Questions to Confirm
++
++1. **Search volume source mismatch:** should the app use column **J** or **L** as canonical `searchVolume`? (Power Score references `J`, but Impact/Low Volume reference `L`.)
++2. **Lost Top 5 threshold:** should `currentRank >= 5` be kept exactly as provided, or do you want the stricter interpretation (`>= 6`) for “fell out of top 5”?
++3. **Rounding policy:** should Power Score display/use full precision internally and round only in UI, or round to 2 decimals at compute time?
+ 
+EOF
+)

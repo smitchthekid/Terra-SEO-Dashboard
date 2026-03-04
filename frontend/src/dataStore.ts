@@ -370,24 +370,7 @@ export function getTopMovers(query: any) {
     };
 }
 
-function getCTR(position: number): number {
-    if (position <= 0 || position === null || isNaN(position)) return 0;
-    const ctrMap: Record<number, number> = {
-        1: 0.317, 2: 0.247, 3: 0.186, 4: 0.136, 5: 0.095,
-        6: 0.062, 7: 0.042, 8: 0.031, 9: 0.026, 10: 0.023,
-    };
-    if (ctrMap[Math.round(position)]) return ctrMap[Math.round(position)];
-    if (position <= 10) {
-        const lower = Math.floor(position);
-        const upper = Math.ceil(position);
-        const lCTR = ctrMap[lower] || 0.023;
-        const uCTR = ctrMap[upper] || 0.023;
-        return lCTR + (uCTR - lCTR) * (position - lower);
-    }
-    if (position <= 20) return 0.01;
-    if (position <= 50) return 0.002;
-    return 0.0005;
-}
+
 
 interface ReportRecord {
     query: string;
@@ -409,16 +392,6 @@ interface ReportRecord {
     last_check_date: string | null;
 }
 
-function computeAvgRankForPeriod(record: KeywordRecord, dates: string[]): number | null {
-    const vals: number[] = [];
-    for (const d of dates) {
-        const p = record.positions[d];
-        if (p !== null && p !== undefined) vals.push(p);
-    }
-    if (vals.length === 0) return null;
-    return vals.reduce((a, b) => a + b, 0) / vals.length;
-}
-
 function getLastCheckDate(record: KeywordRecord): string | null {
     const sortedDates = ALL_DATES.slice().sort(); // Chronological (oldest to newest)
     for (let i = sortedDates.length - 1; i >= 0; i--) {
@@ -428,12 +401,12 @@ function getLastCheckDate(record: KeywordRecord): string | null {
     return null;
 }
 
-function assignTrendBucket(clickDelta: number): string {
-    if (clickDelta > 50) return 'Big Gain';
-    if (clickDelta > 0) return 'Small Gain';
-    if (clickDelta === 0) return 'Stable';
-    if (clickDelta >= -50) return 'Small Loss';
-    if (clickDelta >= -200) return 'Moderate Loss';
+function assignTrendBucket(fpcpDelta: number): string {
+    if (fpcpDelta > 500) return 'Big Gain';
+    if (fpcpDelta > 0) return 'Small Gain';
+    if (fpcpDelta === 0) return 'Stable';
+    if (fpcpDelta >= -500) return 'Small Loss';
+    if (fpcpDelta >= -2000) return 'Moderate Loss';
     return 'Big Loss';
 }
 
@@ -446,23 +419,32 @@ function assignRankMovement(rankPrev: number | null, rankNow: number | null): st
     return 'No Change';
 }
 
-function buildReportData(queryContains: string, urlContains: string, avgPosMax: number, lastCheckedDays: number): ReportRecord[] {
-    const sortedDates = ALL_DATES.slice().sort(); // chronological
+function buildReportData(queryContains: string, urlContains: string, avgPosMax: number, lastCheckedDays: number): { records: ReportRecord[], newestDate: string | null, previousDate: string | null, daysInterval: number } {
+    const sortedDates = ALL_DATES.slice().sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    if (sortedDates.length === 0) return { records: [], newestDate: null, previousDate: null, daysInterval: 0 };
+
     const newestDate = sortedDates[sortedDates.length - 1];
-    if (!newestDate) return [];
+
+    let previousDate = null;
+    const newestMonth = newestDate.substring(0, 7);
+    for (let i = sortedDates.length - 2; i >= 0; i--) {
+        if (sortedDates[i].substring(0, 7) !== newestMonth) {
+            previousDate = sortedDates[i];
+            break;
+        }
+    }
+
+    // Fallback if no different month exists
+    if (!previousDate && sortedDates.length > 1) {
+        previousDate = sortedDates[sortedDates.length - 2];
+    }
+
+    let daysInterval = 0;
+    if (newestDate && previousDate) {
+        daysInterval = Math.max(1, Math.round((new Date(newestDate).getTime() - new Date(previousDate).getTime()) / (1000 * 3600 * 24)));
+    }
 
     const newestMs = new Date(newestDate).getTime();
-    const day90Ms = 90 * 24 * 60 * 60 * 1000;
-
-    const last3moStart = new Date(newestMs - day90Ms).toISOString().split('T')[0];
-    const last3moEnd = newestDate;
-
-    const prev3moStart = new Date(newestMs - 2 * day90Ms).toISOString().split('T')[0];
-    const prev3moEnd = last3moStart;
-
-    const last3moDates = sortedDates.filter(d => d >= last3moStart && d <= last3moEnd);
-    const prev3moDates = sortedDates.filter(d => d >= prev3moStart && d < prev3moEnd);
-
     const lastCheckedCutoff = new Date(newestMs - lastCheckedDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const results: ReportRecord[] = [];
@@ -473,20 +455,16 @@ function buildReportData(queryContains: string, urlContains: string, avgPosMax: 
         if (queryContains && !kw.keyword.toLowerCase().includes(queryContains.toLowerCase())) continue;
         if (urlContains && !kw.urlInSerp.toLowerCase().includes(urlContains.toLowerCase())) continue;
 
-        const rankLast = computeAvgRankForPeriod(kw, last3moDates);
-        const rankPrev = computeAvgRankForPeriod(kw, prev3moDates);
+        const rankLast = kw.positions[newestDate] ?? null;
+        const rankPrev = previousDate ? (kw.positions[previousDate] ?? null) : null;
 
         if (rankLast !== null && rankLast > avgPosMax) continue;
         if (rankLast === null && rankPrev !== null && rankPrev > avgPosMax) continue;
 
-        const clicksLast = rankLast !== null ? Math.round(kw.volume * getCTR(rankLast) * 3) : 0;
-        const clicksPrev = rankPrev !== null ? Math.round(kw.volume * getCTR(rankPrev) * 3) : 0;
+        const fpcpNow = (rankLast !== null && rankLast < 11) ? kw.volume : 0;
+        const fpcpWas = (rankPrev !== null && rankPrev < 11) ? kw.volume : 0;
+        const fpcpDelta = fpcpNow - fpcpWas;
 
-        const impressionsLast = rankLast !== null ? kw.volume * 3 : 0;
-        const impressionsPrev = rankPrev !== null ? kw.volume * 3 : 0;
-
-        const clickDelta = clicksLast - clicksPrev;
-        const impressionsDelta = impressionsLast - impressionsPrev;
         const rankDelta = (rankLast !== null && rankPrev !== null) ? parseFloat((rankLast - rankPrev).toFixed(2)) : 0;
         const positionsGained = (rankPrev !== null && rankLast !== null) ? parseFloat((rankPrev - rankLast).toFixed(2)) : 0;
 
@@ -495,23 +473,20 @@ function buildReportData(queryContains: string, urlContains: string, avgPosMax: 
             canonical_url: kw.urlInSerp,
             query_category: kw.tags,
             volume: kw.volume,
-            rank_last_3mo: rankLast !== null ? parseFloat(rankLast.toFixed(1)) : null,
-            rank_prev_3mo: rankPrev !== null ? parseFloat(rankPrev.toFixed(1)) : null,
-            clicks_last_3mo: clicksLast,
-            clicks_prev_3mo: clicksPrev,
-            impressions_last_3mo: impressionsLast,
-            impressions_prev_3mo: impressionsPrev,
-            click_delta: clickDelta,
-            impressions_delta: impressionsDelta,
+            rank_now: rankLast !== null ? parseFloat(rankLast.toFixed(1)) : null,
+            rank_was: rankPrev !== null ? parseFloat(rankPrev.toFixed(1)) : null,
+            fpcp_now: fpcpNow,
+            fpcp_was: fpcpWas,
+            fpcp_delta: fpcpDelta,
             rank_delta: rankDelta,
             positions_gained: positionsGained,
-            trend_bucket: assignTrendBucket(clickDelta),
+            trend_bucket: assignTrendBucket(fpcpDelta),
             rank_movement: assignRankMovement(rankPrev, rankLast),
             last_check_date: lastCheck,
-        });
+        } as any);
     }
 
-    return results;
+    return { records: results, newestDate, previousDate, daysInterval };
 }
 
 export function getSeoReport(query: any) {
@@ -520,169 +495,260 @@ export function getSeoReport(query: any) {
     const avgPosMax = parseFloat(query.avg_position_max) || 200;
     const lastCheckedDays = parseInt(query.last_checked_days) || 30;
 
-    const records = buildReportData(queryContains, urlContains, avgPosMax, lastCheckedDays);
+    const { records, newestDate, previousDate, daysInterval } = buildReportData(queryContains, urlContains, avgPosMax, lastCheckedDays) as any;
 
-    const totalClicksLast = records.reduce((s, r) => s + r.clicks_last_3mo, 0);
-    const totalClicksPrev = records.reduce((s, r) => s + r.clicks_prev_3mo, 0);
-    const clickDelta = totalClicksLast - totalClicksPrev;
+    const totalFpcpNow = records.reduce((s: any, r: any) => s + r.fpcp_now, 0);
+    const totalFpcpWas = records.reduce((s: any, r: any) => s + r.fpcp_was, 0);
+    const fpcpDelta = totalFpcpNow - totalFpcpWas;
 
-    const rankedLast = records.filter(r => r.rank_last_3mo !== null);
-    const rankedPrev = records.filter(r => r.rank_prev_3mo !== null);
+    const rankedLast = records.filter((r: any) => r.rank_now !== null);
+    const rankedPrev = records.filter((r: any) => r.rank_was !== null);
     const avgRankNow = rankedLast.length > 0
-        ? parseFloat((rankedLast.reduce((s, r) => s + r.rank_last_3mo!, 0) / rankedLast.length).toFixed(1))
+        ? parseFloat((rankedLast.reduce((s: any, r: any) => s + r.rank_now!, 0) / rankedLast.length).toFixed(1))
         : 0;
     const avgRankWas = rankedPrev.length > 0
-        ? parseFloat((rankedPrev.reduce((s, r) => s + r.rank_prev_3mo!, 0) / rankedPrev.length).toFixed(1))
+        ? parseFloat((rankedPrev.reduce((s: any, r: any) => s + r.rank_was!, 0) / rankedPrev.length).toFixed(1))
         : 0;
     const rankDelta = parseFloat((avgRankNow - avgRankWas).toFixed(2));
 
-    const trendBuckets: Record<string, { clickDelta: number; rankNowSum: number; rankWasSum: number; rankNowCount: number; rankWasCount: number; count: number }> = {};
+    const trendBuckets: Record<string, { fpcpDelta: number; rankNowSum: number; rankWasSum: number; rankNowCount: number; rankWasCount: number; count: number }> = {};
     const bucketOrder = ['Big Gain', 'Small Gain', 'Stable', 'Small Loss', 'Moderate Loss', 'Big Loss'];
-    bucketOrder.forEach(b => { trendBuckets[b] = { clickDelta: 0, rankNowSum: 0, rankWasSum: 0, rankNowCount: 0, rankWasCount: 0, count: 0 }; });
+    bucketOrder.forEach(b => { trendBuckets[b] = { fpcpDelta: 0, rankNowSum: 0, rankWasSum: 0, rankNowCount: 0, rankWasCount: 0, count: 0 }; });
 
-    records.forEach(r => {
+    records.forEach((r: any) => {
         const b = trendBuckets[r.trend_bucket];
         if (!b) return;
-        b.clickDelta += r.click_delta;
+        b.fpcpDelta += r.fpcp_delta;
         b.count++;
-        if (r.rank_last_3mo !== null) { b.rankNowSum += r.rank_last_3mo; b.rankNowCount++; }
-        if (r.rank_prev_3mo !== null) { b.rankWasSum += r.rank_prev_3mo; b.rankWasCount++; }
+        if (r.rank_now !== null) { b.rankNowSum += r.rank_now; b.rankNowCount++; }
+        if (r.rank_was !== null) { b.rankWasSum += r.rank_was; b.rankWasCount++; }
     });
 
     const trends = bucketOrder.map(name => ({
         trend: name,
-        click_delta: trendBuckets[name].clickDelta,
+        fpcp_delta: trendBuckets[name].fpcpDelta,
         rank_now: trendBuckets[name].rankNowCount > 0 ? parseFloat((trendBuckets[name].rankNowSum / trendBuckets[name].rankNowCount).toFixed(1)) : null,
         rank_was: trendBuckets[name].rankWasCount > 0 ? parseFloat((trendBuckets[name].rankWasSum / trendBuckets[name].rankWasCount).toFixed(1)) : null,
         count: trendBuckets[name].count,
     }));
 
     const clickDeclines = records
-        .filter(r => r.click_delta < 0)
-        .sort((a, b) => a.click_delta - b.click_delta)
-        .map(r => ({
+        .filter((r: any) => r.fpcp_delta < 0)
+        .sort((a: any, b: any) => a.fpcp_delta - b.fpcp_delta)
+        .map((r: any) => ({
             query: r.query,
-            click_delta: r.click_delta,
-            impressions_delta: r.impressions_delta,
+            volume: r.volume,
+            fpcp_delta: r.fpcp_delta,
             rank_delta: r.rank_delta,
-            rank_was: r.rank_prev_3mo,
-            rank_now: r.rank_last_3mo,
+            rank_was: r.rank_was,
+            rank_now: r.rank_now,
         }));
 
     const clickGains = records
-        .filter(r => r.click_delta > 0)
-        .sort((a, b) => b.click_delta - a.click_delta)
-        .map(r => ({
+        .filter((r: any) => r.fpcp_delta > 0)
+        .sort((a: any, b: any) => b.fpcp_delta - a.fpcp_delta)
+        .map((r: any) => ({
             query: r.query,
-            click_delta: r.click_delta,
+            volume: r.volume,
+            fpcp_delta: r.fpcp_delta,
             positions_gained: r.positions_gained,
-            impressions_delta: r.impressions_delta,
-            rank_was: r.rank_prev_3mo,
-            rank_now: r.rank_last_3mo,
+            rank_was: r.rank_was,
+            rank_now: r.rank_now,
         }));
 
     const queryUrlCombined = records
-        .filter(r => r.click_delta !== 0)
-        .sort((a, b) => Math.abs(b.click_delta) - Math.abs(a.click_delta))
-        .map(r => ({
+        .filter((r: any) => r.fpcp_delta !== 0)
+        .sort((a: any, b: any) => Math.abs(b.fpcp_delta) - Math.abs(a.fpcp_delta))
+        .map((r: any) => ({
             canonical_url: r.canonical_url,
             query: r.query,
-            click_delta: r.click_delta,
-            impressions_delta: r.impressions_delta,
+            volume: r.volume,
+            fpcp_delta: r.fpcp_delta,
             rank_delta: r.rank_delta,
-            rank_was: r.rank_prev_3mo,
-            rank_now: r.rank_last_3mo,
+            rank_was: r.rank_was,
+            rank_now: r.rank_now,
         }));
 
     const movementCategories = ['Gained First Page', 'Lost First Page', 'Gained Rank', 'Lost Rank', 'No Change'];
     const rankTrendsVisual = movementCategories.map(cat => ({
         category: cat,
-        clicks_delta: records.filter(r => r.rank_movement === cat).reduce((s, r) => s + r.click_delta, 0),
-        count: records.filter(r => r.rank_movement === cat).length,
+        fpcp_delta: records.filter((r: any) => r.rank_movement === cat).reduce((s: any, r: any) => s + r.fpcp_delta, 0),
+        count: records.filter((r: any) => r.rank_movement === cat).length,
     }));
 
-    const catMap: Record<string, { clicksDelta: number; rankLastSum: number; rankPrevSum: number; rankLastCount: number; rankPrevCount: number; count: number }> = {};
-    records.forEach(r => {
+    const catMap: Record<string, { fpcpDelta: number; rankLastSum: number; rankPrevSum: number; rankLastCount: number; rankPrevCount: number; count: number }> = {};
+    records.forEach((r: any) => {
         const cats = r.query_category.length > 0 ? r.query_category : ['Other'];
-        cats.forEach(cat => {
-            if (!catMap[cat]) catMap[cat] = { clicksDelta: 0, rankLastSum: 0, rankPrevSum: 0, rankLastCount: 0, rankPrevCount: 0, count: 0 };
+        cats.forEach((cat: any) => {
+            if (!catMap[cat]) catMap[cat] = { fpcpDelta: 0, rankLastSum: 0, rankPrevSum: 0, rankLastCount: 0, rankPrevCount: 0, count: 0 };
             const c = catMap[cat];
-            c.clicksDelta += r.click_delta;
+            c.fpcpDelta += r.fpcp_delta;
             c.count++;
-            if (r.rank_last_3mo !== null) { c.rankLastSum += r.rank_last_3mo; c.rankLastCount++; }
-            if (r.rank_prev_3mo !== null) { c.rankPrevSum += r.rank_prev_3mo; c.rankPrevCount++; }
+            if (r.rank_now !== null) { c.rankLastSum += r.rank_now; c.rankLastCount++; }
+            if (r.rank_was !== null) { c.rankPrevSum += r.rank_was; c.rankPrevCount++; }
         });
     });
 
     const categoryTrends = Object.entries(catMap)
         .map(([category, data]) => ({
             query_category: category,
-            clicks_delta_3mo: data.clicksDelta,
-            rank_last_3mo: data.rankLastCount > 0 ? parseFloat((data.rankLastSum / data.rankLastCount).toFixed(1)) : null,
-            rank_prev_3mo: data.rankPrevCount > 0 ? parseFloat((data.rankPrevSum / data.rankPrevCount).toFixed(1)) : null,
+            fpcp_delta: data.fpcpDelta,
+            rank_now: data.rankLastCount > 0 ? parseFloat((data.rankLastSum / data.rankLastCount).toFixed(1)) : null,
+            rank_was: data.rankPrevCount > 0 ? parseFloat((data.rankPrevSum / data.rankPrevCount).toFixed(1)) : null,
             count: data.count,
         }))
-        .sort((a, b) => Math.abs(b.clicks_delta_3mo) - Math.abs(a.clicks_delta_3mo));
+        .sort((a, b) => Math.abs(b.fpcp_delta) - Math.abs(a.fpcp_delta));
 
     const declinesTotal = {
-        click_delta: clickDeclines.reduce((s, r) => s + r.click_delta, 0),
-        impressions_delta: clickDeclines.reduce((s, r) => s + r.impressions_delta, 0),
-        rank_delta: clickDeclines.length > 0 ? parseFloat((clickDeclines.reduce((s, r) => s + r.rank_delta, 0) / clickDeclines.length).toFixed(2)) : 0,
-        rank_was: clickDeclines.filter(r => r.rank_was !== null).length > 0
-            ? parseFloat((clickDeclines.filter(r => r.rank_was !== null).reduce((s, r) => s + r.rank_was!, 0) / clickDeclines.filter(r => r.rank_was !== null).length).toFixed(1))
+        fpcp_delta: clickDeclines.reduce((s: any, r: any) => s + r.fpcp_delta, 0),
+        rank_delta: clickDeclines.length > 0 ? parseFloat((clickDeclines.reduce((s: any, r: any) => s + r.rank_delta, 0) / clickDeclines.length).toFixed(2)) : 0,
+        rank_was: clickDeclines.filter((r: any) => r.rank_was !== null).length > 0
+            ? parseFloat((clickDeclines.filter((r: any) => r.rank_was !== null).reduce((s: any, r: any) => s + r.rank_was!, 0) / clickDeclines.filter((r: any) => r.rank_was !== null).length).toFixed(1))
             : null,
-        rank_now: clickDeclines.filter(r => r.rank_now !== null).length > 0
-            ? parseFloat((clickDeclines.filter(r => r.rank_now !== null).reduce((s, r) => s + r.rank_now!, 0) / clickDeclines.filter(r => r.rank_now !== null).length).toFixed(1))
+        rank_now: clickDeclines.filter((r: any) => r.rank_now !== null).length > 0
+            ? parseFloat((clickDeclines.filter((r: any) => r.rank_now !== null).reduce((s: any, r: any) => s + r.rank_now!, 0) / clickDeclines.filter((r: any) => r.rank_now !== null).length).toFixed(1))
             : null,
         count: clickDeclines.length,
     };
 
     const gainsTotal = {
-        click_delta: clickGains.reduce((s, r) => s + r.click_delta, 0),
-        positions_gained: clickGains.length > 0 ? parseFloat((clickGains.reduce((s, r) => s + r.positions_gained, 0) / clickGains.length).toFixed(2)) : 0,
-        impressions_delta: clickGains.reduce((s, r) => s + r.impressions_delta, 0),
-        rank_was: clickGains.filter(r => r.rank_was !== null).length > 0
-            ? parseFloat((clickGains.filter(r => r.rank_was !== null).reduce((s, r) => s + r.rank_was!, 0) / clickGains.filter(r => r.rank_was !== null).length).toFixed(1))
+        fpcp_delta: clickGains.reduce((s: any, r: any) => s + r.fpcp_delta, 0),
+        positions_gained: clickGains.length > 0 ? parseFloat((clickGains.reduce((s: any, r: any) => s + r.positions_gained, 0) / clickGains.length).toFixed(2)) : 0,
+        rank_was: clickGains.filter((r: any) => r.rank_was !== null).length > 0
+            ? parseFloat((clickGains.filter((r: any) => r.rank_was !== null).reduce((s: any, r: any) => s + r.rank_was!, 0) / clickGains.filter((r: any) => r.rank_was !== null).length).toFixed(1))
             : null,
-        rank_now: clickGains.filter(r => r.rank_now !== null).length > 0
-            ? parseFloat((clickGains.filter(r => r.rank_now !== null).reduce((s, r) => s + r.rank_now!, 0) / clickGains.filter(r => r.rank_now !== null).length).toFixed(1))
+        rank_now: clickGains.filter((r: any) => r.rank_now !== null).length > 0
+            ? parseFloat((clickGains.filter((r: any) => r.rank_now !== null).reduce((s: any, r: any) => s + r.rank_now!, 0) / clickGains.filter((r: any) => r.rank_now !== null).length).toFixed(1))
             : null,
         count: clickGains.length,
     };
 
     const combinedTotal = {
-        click_delta: queryUrlCombined.reduce((s, r) => s + r.click_delta, 0),
-        impressions_delta: queryUrlCombined.reduce((s, r) => s + r.impressions_delta, 0),
-        rank_delta: queryUrlCombined.length > 0 ? parseFloat((queryUrlCombined.reduce((s, r) => s + r.rank_delta, 0) / queryUrlCombined.length).toFixed(2)) : 0,
-        rank_was: queryUrlCombined.filter(r => r.rank_was !== null).length > 0
-            ? parseFloat((queryUrlCombined.filter(r => r.rank_was !== null).reduce((s, r) => s + r.rank_was!, 0) / queryUrlCombined.filter(r => r.rank_was !== null).length).toFixed(1))
+        fpcp_delta: queryUrlCombined.reduce((s: any, r: any) => s + r.fpcp_delta, 0),
+        rank_delta: queryUrlCombined.length > 0 ? parseFloat((queryUrlCombined.reduce((s: any, r: any) => s + r.rank_delta, 0) / queryUrlCombined.length).toFixed(2)) : 0,
+        rank_was: queryUrlCombined.filter((r: any) => r.rank_was !== null).length > 0
+            ? parseFloat((queryUrlCombined.filter((r: any) => r.rank_was !== null).reduce((s: any, r: any) => s + r.rank_was!, 0) / queryUrlCombined.filter((r: any) => r.rank_was !== null).length).toFixed(1))
             : null,
-        rank_now: queryUrlCombined.filter(r => r.rank_now !== null).length > 0
-            ? parseFloat((queryUrlCombined.filter(r => r.rank_now !== null).reduce((s, r) => s + r.rank_now!, 0) / queryUrlCombined.filter(r => r.rank_now !== null).length).toFixed(1))
+        rank_now: queryUrlCombined.filter((r: any) => r.rank_now !== null).length > 0
+            ? parseFloat((queryUrlCombined.filter((r: any) => r.rank_now !== null).reduce((s: any, r: any) => s + r.rank_now!, 0) / queryUrlCombined.filter((r: any) => r.rank_now !== null).length).toFixed(1))
             : null,
         count: queryUrlCombined.length,
     };
 
     return {
         topMetrics: {
-            click_delta: clickDelta,
-            clicks_last_3mo: totalClicksLast,
-            clicks_prev_3mo: totalClicksPrev,
+            fpcp_delta: fpcpDelta,
+            fpcp_now: totalFpcpNow,
+            fpcp_was: totalFpcpWas,
             rank_delta: rankDelta,
             avg_rank_was: avgRankWas,
             avg_rank_now: avgRankNow,
             total_records: records.length,
         },
+        metadata: {
+            newestDate,
+            previousDate,
+            daysInterval,
+        },
         trends,
-        clickDeclines: clickDeclines.slice(0, 200),
-        clickGains: clickGains.slice(0, 200),
-        queryUrlCombined: queryUrlCombined.slice(0, 200),
+        clickDeclines: clickDeclines.slice(0, 500),
+        clickGains: clickGains.slice(0, 500),
+        queryUrlCombined: queryUrlCombined.slice(0, 500),
         rankTrendsVisual,
         categoryTrends,
         declinesTotal,
         gainsTotal,
         combinedTotal,
     };
+}
+
+export function getHighImpactItems() {
+    if (ALL_DATES.length === 0) return [];
+
+    const sortedDates = ALL_DATES.slice().sort(); // chronological
+    const newestDate = sortedDates[sortedDates.length - 1];
+
+    const newestMs = new Date(newestDate).getTime();
+    const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
+
+    let prev90Date = sortedDates[0];
+    let minDiff = Infinity;
+    for (const d of sortedDates) {
+        const diff = Math.abs(new Date(d).getTime() - (newestMs - ninetyDaysMs));
+        if (diff < minDiff) {
+            minDiff = diff;
+            prev90Date = d;
+        }
+    }
+
+    const items = KEYWORDS
+        .filter(kw => kw.positions[newestDate] !== null && kw.positions[newestDate] !== undefined)
+        .map(kw => {
+            const currentRank = kw.positions[newestDate] as number;
+            const prevRank = kw.positions[prev90Date] ?? null;
+            const rankChange = prevRank !== null ? currentRank - prevRank : null;
+
+            const validHistory = sortedDates.map(d => kw.positions[d]).filter((v): v is number => v !== null && v !== undefined && !Number.isNaN(v) && v !== 0);
+
+            let histAvg: number | null = null;
+            let histMin: number | null = null;
+            let histMax: number | null = null;
+
+            if (validHistory.length > 0) {
+                histAvg = parseFloat((validHistory.reduce((a, b) => a + b, 0) / validHistory.length).toFixed(2));
+                histMin = Math.min(...validHistory);
+                histMax = Math.round(Math.max(...validHistory));
+            }
+
+            let visibilityLoss = '';
+            if (prevRank !== null && prevRank !== undefined && currentRank !== null && currentRank !== undefined) {
+                if (prevRank <= 5 && currentRank >= 6) visibilityLoss = 'Lost Top 5';
+                else if (prevRank <= 10 && currentRank >= 11) visibilityLoss = 'Lost Top 10';
+            }
+
+            let powerScore: number | null = null;
+            if (kw.keyword?.trim() !== '') {
+                if (kw.volume <= 0) {
+                    powerScore = 0;
+                } else if (currentRank !== null && currentRank !== undefined) {
+                    const logVolume = Math.log10(kw.volume);
+                    const multiplier = currentRank < 11 ? 10 : (21 - currentRank);
+                    powerScore = parseFloat((logVolume * multiplier).toFixed(2));
+                }
+            }
+
+            let impactScore = 0;
+            if (currentRank !== null && currentRank !== undefined && currentRank < 11 && kw.volume > 0) {
+                impactScore = parseFloat((kw.volume / currentRank).toFixed(2));
+            }
+
+            return {
+                keyword: kw.keyword,
+                volume: kw.volume,
+                currentRank,
+                previous90dRank: prevRank,
+                rankChange,
+                visibilityLoss,
+                powerScore,
+                impactScore,
+                histAvg,
+                histMin,
+                histMax,
+                impactImproved: kw.volume > 0 && powerScore !== null && powerScore > 20 ? 'High Impact' : '',
+                lowVolume: kw.volume === 0 ? 'Low Search Volume' : '',
+            };
+        });
+
+    items.sort((a, b) => {
+        const pScoreDiff = (b.powerScore ?? -Infinity) - (a.powerScore ?? -Infinity);
+        if (pScoreDiff !== 0) return pScoreDiff;
+        return (b.rankChange ?? -Infinity) - (a.rankChange ?? -Infinity);
+    });
+
+    return items.map((item, idx) => ({
+        ...item,
+        inspectionRequired: idx < 50 && item.impactScore > 0
+    }));
 }
 
 export function getTagSummary(query: any) {
@@ -696,6 +762,7 @@ export function getTagSummary(query: any) {
         raised: number;
         dropped: number;
         unchanged: number;
+        totalNetChange: number;
     }> = {};
 
     KEYWORDS.forEach(kw => {
@@ -709,12 +776,14 @@ export function getTagSummary(query: any) {
                     raised: 0,
                     dropped: 0,
                     unchanged: 0,
+                    totalNetChange: 0,
                 };
             }
             const g = tagGroups[tag];
             g.keywords++;
             g.totalVolume += kw.volume;
             if (metrics.avgPos !== '-') g.avgPositions.push(parseFloat(metrics.avgPos));
+            g.totalNetChange += metrics.netChange;
             if (metrics.netChange > 0) g.raised++;
             else if (metrics.netChange < 0) g.dropped++;
             else g.unchanged++;
@@ -732,6 +801,7 @@ export function getTagSummary(query: any) {
             raised: data.raised,
             dropped: data.dropped,
             unchanged: data.unchanged,
+            totalNetChange: data.totalNetChange,
         }))
         .sort((a, b) => b.totalVolume - a.totalVolume);
 
