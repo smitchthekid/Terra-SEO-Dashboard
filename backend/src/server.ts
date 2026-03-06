@@ -372,6 +372,8 @@ app.post('/api/fetch-serpstat', async (req, res) => {
             success: true,
             count: KEYWORDS.length,
             dates: ALL_DATES.length,
+            keywords: KEYWORDS,
+            allDates: ALL_DATES,
             source: 'serpstat_mcp',
         });
     } catch (e: any) {

@@ -106,7 +106,11 @@ export const HighImpactView = () => {
 
     const timelineKeywords = useMemo(() => {
         if (timelineData.length === 0) return [];
-        return Object.keys(timelineData[0] || {}).filter(k => k !== 'date');
+        const keySet = new Set<string>();
+        timelineData.forEach(row => {
+            Object.keys(row).forEach(k => { if (k !== 'date') keySet.add(k); });
+        });
+        return Array.from(keySet);
     }, [timelineData]);
 
     // Build category pie chart data from ALL filtered items

@@ -419,7 +419,10 @@ const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
                           });
                           const data = await resp.json();
                           if (!resp.ok) throw new Error(data.error || 'Failed to fetch from Serpstat');
-                          // Reload data status and refresh
+                          // Hydrate the frontend in-memory store with the data the backend fetched
+                          if (data.keywords && data.allDates) {
+                            loadSerpstatData(data.keywords, data.allDates);
+                          }
                           onDataLoaded();
                         } catch (e: any) {
                           setError(e.message);
