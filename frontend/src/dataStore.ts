@@ -18,6 +18,17 @@ export function clearData(): void {
     localStorage.removeItem('terra_seo_csv_cache');
 }
 
+/**
+ * Load pre-structured keyword data from the Serpstat MCP response.
+ * The backend has already transformed the data into KeywordRecord shape.
+ */
+export function loadSerpstatData(keywords: KeywordRecord[], dates: string[]): void {
+    KEYWORDS = keywords;
+    ALL_DATES = dates;
+    // Clear CSV cache since we are loading from Serpstat
+    localStorage.removeItem('terra_seo_csv_cache');
+}
+
 export function loadFromCache(): boolean {
     const cached = localStorage.getItem('terra_seo_csv_cache');
     if (cached) {
@@ -671,22 +682,44 @@ export function getHighImpactItems() {
     const newestMs = new Date(newestDate).getTime();
     const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
 
-    let prev90Date = sortedDates[0];
-    let minDiff = Infinity;
-    for (const d of sortedDates) {
-        const diff = Math.abs(new Date(d).getTime() - (newestMs - ninetyDaysMs));
-        if (diff < minDiff) {
-            minDiff = diff;
-            prev90Date = d;
-        }
+    // Find the date closest to 90 days ago, but NEVER pick newestDate itself
+    const earlierDates = sortedDates.filter(d => d < newestDate);
+    let prev90Date: string;
+
+    if (earlierDates.length === 0) {
+        // Only one date in the dataset -- no comparison possible
+        return [];
     }
 
+    let best = earlierDates[0];
+    let bestDiff = Infinity;
+    for (const d of earlierDates) {
+        const diff = Math.abs(new Date(d).getTime() - (newestMs - ninetyDaysMs));
+        if (diff < bestDiff) {
+            bestDiff = diff;
+            best = d;
+        }
+    }
+    prev90Date = best;
+
+
     const items = KEYWORDS
-        .filter(kw => kw.positions[newestDate] !== null && kw.positions[newestDate] !== undefined)
+        .filter(kw => {
+            // Exclude items with no current rank data
+            if (kw.positions[newestDate] === null || kw.positions[newestDate] === undefined) return false;
+            // Exclude items with volume less than 100
+            if (kw.volume < 100) return false;
+            // Exclude items with no previous rank (cannot compute change)
+            if (kw.positions[prev90Date] === null || kw.positions[prev90Date] === undefined) return false;
+            // Exclude items with no change in rank
+            const change = (kw.positions[newestDate] as number) - (kw.positions[prev90Date] as number);
+            if (change === 0) return false;
+            return true;
+        })
         .map(kw => {
             const currentRank = kw.positions[newestDate] as number;
-            const prevRank = kw.positions[prev90Date] ?? null;
-            const rankChange = prevRank !== null ? currentRank - prevRank : null;
+            const prevRank = kw.positions[prev90Date] as number;
+            const rankChange = currentRank - prevRank;
 
             const validHistory = sortedDates.map(d => kw.positions[d]).filter((v): v is number => v !== null && v !== undefined && !Number.isNaN(v) && v !== 0);
 
@@ -701,10 +734,8 @@ export function getHighImpactItems() {
             }
 
             let visibilityLoss = '';
-            if (prevRank !== null && prevRank !== undefined && currentRank !== null && currentRank !== undefined) {
-                if (prevRank <= 5 && currentRank >= 6) visibilityLoss = 'Lost Top 5';
-                else if (prevRank <= 10 && currentRank >= 11) visibilityLoss = 'Lost Top 10';
-            }
+            if (prevRank <= 5 && currentRank >= 6) visibilityLoss = 'Lost Top 5';
+            else if (prevRank <= 10 && currentRank >= 11) visibilityLoss = 'Lost Top 10';
 
             let powerScore: number | null = null;
             if (kw.keyword?.trim() !== '') {
@@ -724,6 +755,7 @@ export function getHighImpactItems() {
 
             return {
                 keyword: kw.keyword,
+                tags: kw.tags,
                 volume: kw.volume,
                 currentRank,
                 previous90dRank: prevRank,
@@ -734,22 +766,26 @@ export function getHighImpactItems() {
                 histAvg,
                 histMin,
                 histMax,
+                positions: kw.positions,
                 impactImproved: kw.volume > 0 && powerScore !== null && powerScore > 20 ? 'High Impact' : '',
-                lowVolume: kw.volume === 0 ? 'Low Search Volume' : '',
+                lowVolume: '',
             };
         });
 
+    // Sort by largest total rank change (biggest declines first: positive rankChange = rank went up = decline)
     items.sort((a, b) => {
-        const pScoreDiff = (b.powerScore ?? -Infinity) - (a.powerScore ?? -Infinity);
-        if (pScoreDiff !== 0) return pScoreDiff;
-        return (b.rankChange ?? -Infinity) - (a.rankChange ?? -Infinity);
+        const diff = Math.abs(b.rankChange) - Math.abs(a.rankChange);
+        if (diff !== 0) return diff;
+        // Tie-break: show declines (positive rankChange) before improvements
+        return b.rankChange - a.rankChange;
     });
 
     return items.map((item, idx) => ({
         ...item,
-        inspectionRequired: idx < 50 && item.impactScore > 0
+        inspectionRequired: idx < 50 && Math.abs(item.rankChange) > 0
     }));
 }
+
 
 export function getTagSummary(query: any) {
     const dateFrom = query.date_from || ALL_DATES[ALL_DATES.length - 1];

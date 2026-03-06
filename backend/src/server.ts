@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import axios from 'axios';
+import { listProjects, fetchPositionsHistory, discoverTools } from './serpstatMcp';
 
 dotenv.config();
 
@@ -213,6 +214,171 @@ app.post('/api/upload-csv-url', async (req, res) => {
         res.json({ success: true, count: KEYWORDS.length });
     } catch (e: any) {
         res.status(500).json({ error: typeof e.response?.data === 'string' ? e.response.data : e.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Serpstat MCP Integration
+// ---------------------------------------------------------------------------
+
+function getSerpstatToken(): string | null {
+    return process.env.SERPSTAT_API_TOKEN || null;
+}
+
+// Check if a Serpstat token is configured
+app.get('/api/serpstat/status', (_req, res) => {
+    const token = getSerpstatToken();
+    res.json({ configured: !!token && token !== 'your_serpstat_api_token_here' });
+});
+
+// List rank tracker projects
+app.get('/api/serpstat/projects', async (_req, res) => {
+    try {
+        const token = getSerpstatToken();
+        if (!token || token === 'your_serpstat_api_token_here') {
+            return res.status(400).json({ error: 'SERPSTAT_API_TOKEN not configured in .env' });
+        }
+        const projects = await listProjects(token);
+        res.json({ projects });
+    } catch (e: any) {
+        console.error('[Serpstat] Error listing projects:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Discover available MCP tools (for debugging)
+app.get('/api/serpstat/tools', async (_req, res) => {
+    try {
+        const token = getSerpstatToken();
+        if (!token || token === 'your_serpstat_api_token_here') {
+            return res.status(400).json({ error: 'SERPSTAT_API_TOKEN not configured in .env' });
+        }
+        const tools = await discoverTools(token);
+        res.json({ tools, count: tools.length });
+    } catch (e: any) {
+        console.error('[Serpstat] Error discovering tools:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+/**
+ * Transform Serpstat positions history data into our KeywordRecord format.
+ * The exact shape depends on what the MCP returns, so we handle multiple formats.
+ */
+function transformSerpstatData(rawData: any): void {
+    const records: any[] = Array.isArray(rawData)
+        ? rawData
+        : (rawData?.data || rawData?.keywords || rawData?.results || [rawData]);
+
+    if (!records || records.length === 0) {
+        throw new Error('No keyword data returned from Serpstat');
+    }
+
+    // Collect all unique dates across all records
+    const dateSet = new Set<string>();
+    const newKeywords: KeywordRecord[] = [];
+
+    for (const rec of records) {
+        // Extract keyword name (try multiple field names)
+        const keyword = rec.keyword || rec.query || rec.name || rec.phrase || '';
+        if (!keyword) continue;
+
+        // Extract tags/categories
+        const tagsRaw = rec.tags || rec.categories || rec.tag || '';
+        const tags: string[] = Array.isArray(tagsRaw)
+            ? tagsRaw.map((t: any) => String(t).trim()).filter((t: string) => t.length > 0)
+            : String(tagsRaw).split(',').map(t => t.trim()).filter(t => t.length > 0);
+
+        // Extract volume
+        const volume = parseInt(String(rec.volume || rec.search_volume || rec.cost || 0)) || 0;
+
+        // Extract positions history
+        const positions: Record<string, number | null> = {};
+        const posHistory = rec.positions || rec.position_history || rec.history || rec.serp_history || {};
+
+        if (typeof posHistory === 'object' && !Array.isArray(posHistory)) {
+            // Object format: { "2026-02-15": 5, "2026-02-20": 3, ... }
+            for (const [date, pos] of Object.entries(posHistory)) {
+                const normalizedDate = normalizeDate(date);
+                if (normalizedDate) {
+                    dateSet.add(normalizedDate);
+                    const numPos = Number(pos);
+                    positions[normalizedDate] = isNaN(numPos) ? null : numPos;
+                }
+            }
+        } else if (Array.isArray(posHistory)) {
+            // Array format: [{ date: "2026-02-15", position: 5 }, ...]
+            for (const entry of posHistory) {
+                const date = normalizeDate(entry.date || entry.check_date || entry.created_at || '');
+                const pos = entry.position ?? entry.pos ?? entry.rank ?? null;
+                if (date) {
+                    dateSet.add(date);
+                    positions[date] = pos !== null ? Number(pos) : null;
+                }
+            }
+        }
+
+        // Extract URLs
+        const urlInSerp = rec.url || rec.found_url || rec.serp_url || '';
+        const expectedUrl = rec.expected_url || rec.target_url || '';
+
+        newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
+    }
+
+    if (newKeywords.length === 0) {
+        throw new Error('Could not parse any keywords from Serpstat response');
+    }
+
+    // Sort dates newest first (matching CSV convention)
+    ALL_DATES = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
+    KEYWORDS = newKeywords;
+
+    console.log(`[Serpstat] Loaded ${KEYWORDS.length} keywords across ${ALL_DATES.length} dates`);
+}
+
+/**
+ * Normalize various date formats to YYYY-MM-DD.
+ */
+function normalizeDate(raw: string): string | null {
+    if (!raw) return null;
+    // Already YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    // ISO string
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().split('T')[0];
+}
+
+// Fetch positions history from Serpstat and load into memory
+app.post('/api/fetch-serpstat', async (req, res) => {
+    try {
+        const token = getSerpstatToken();
+        if (!token || token === 'your_serpstat_api_token_here') {
+            return res.status(400).json({ error: 'SERPSTAT_API_TOKEN not configured in .env' });
+        }
+
+        const { projectId, regionId } = req.body;
+        if (!projectId) {
+            return res.status(400).json({ error: 'projectId is required' });
+        }
+
+        console.log(`[Serpstat] Fetching positions history for project ${projectId}...`);
+        const rawData = await fetchPositionsHistory(token, projectId, regionId);
+
+        // Transform and load data
+        transformSerpstatData(rawData);
+
+        res.json({
+            success: true,
+            count: KEYWORDS.length,
+            dates: ALL_DATES.length,
+            keywords: KEYWORDS,
+            allDates: ALL_DATES,
+            source: 'serpstat_mcp',
+        });
+    } catch (e: any) {
+        console.error('[Serpstat] Error fetching data:', e.message);
+        res.status(500).json({ error: e.message });
     }
 });
 

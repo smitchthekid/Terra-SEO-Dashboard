@@ -11,6 +11,7 @@ import {
   clearData,
   parseCSVContent,
   loadFromCache,
+  loadSerpstatData,
   getDataStatus,
   getDataInfo,
   getTags,
@@ -218,6 +219,34 @@ const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
+  // Serpstat MCP state
+  const [serpstatConfigured, setSerpstatConfigured] = useState(false);
+  const [serpstatProjects, setSerpstatProjects] = useState<any[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [serpstatLoading, setSerpstatLoading] = useState(false);
+  const [serpstatProjectsLoading, setSerpstatProjectsLoading] = useState(false);
+
+  // Check Serpstat configuration on mount
+  useEffect(() => {
+    fetch('/api/serpstat/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data.configured) {
+          setSerpstatConfigured(true);
+          // Auto-fetch projects
+          setSerpstatProjectsLoading(true);
+          fetch('/api/serpstat/projects')
+            .then(r => r.json())
+            .then(pData => {
+              setSerpstatProjects(pData.projects || []);
+            })
+            .catch(err => console.warn('Could not load Serpstat projects:', err))
+            .finally(() => setSerpstatProjectsLoading(false));
+        }
+      })
+      .catch(() => { /* Serpstat not available, that is fine */ });
+  }, []);
+
   // Auto-fetch for testing purposes
   useEffect(() => {
     if (url === defaultUrl && !uploading) {
@@ -341,6 +370,80 @@ const UploadScreen = ({ onDataLoaded }: { onDataLoaded: () => void }) => {
             </div>
             <p className="mt-2 text-xs text-gray-500">The sheet must be publicly accessible or shared with 'Anyone with the link'.</p>
           </form>
+
+          {serpstatConfigured && (
+            <>
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-white px-3 text-sm text-gray-500 font-medium">OR</span>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 mb-3 uppercase tracking-wider">Option 3: Fetch from Serpstat</h3>
+                <p className="text-xs text-gray-500 mb-3">Pull live rank tracker data directly from your Serpstat account via MCP.</p>
+                {serpstatProjectsLoading ? (
+                  <div className="text-sm text-gray-500 animate-pulse">Loading projects from Serpstat...</div>
+                ) : serpstatProjects.length > 0 ? (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Select Project</label>
+                      <select
+                        value={selectedProjectId}
+                        onChange={(e) => setSelectedProjectId(e.target.value)}
+                        className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 py-2 px-3 border"
+                        disabled={serpstatLoading}
+                      >
+                        <option value="">-- Choose a project --</option>
+                        {serpstatProjects.map((proj: any, idx: number) => (
+                          <option key={proj.id || idx} value={proj.id || idx}>
+                            {proj.name || proj.title || proj.domain || `Project ${proj.id || idx}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!selectedProjectId) return;
+                        if (!window.confirm('This will replace your current data with live Serpstat data. Continue?')) return;
+                        setSerpstatLoading(true);
+                        setError('');
+                        try {
+                          const resp = await fetch('/api/fetch-serpstat', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ projectId: selectedProjectId }),
+                          });
+                          const data = await resp.json();
+                          if (!resp.ok) throw new Error(data.error || 'Failed to fetch from Serpstat');
+                          // Hydrate the frontend in-memory store with the data the backend fetched
+                          if (data.keywords && data.allDates) {
+                            loadSerpstatData(data.keywords, data.allDates);
+                          }
+                          onDataLoaded();
+                        } catch (e: any) {
+                          setError(e.message);
+                        } finally {
+                          setSerpstatLoading(false);
+                        }
+                      }}
+                      disabled={!selectedProjectId || serpstatLoading}
+                      className="w-full inline-flex justify-center items-center px-4 py-2.5 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {serpstatLoading ? 'Fetching from Serpstat...' : 'Fetch Rank Data'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                    No rank tracker projects found. Create a project in Serpstat first.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -541,8 +644,8 @@ const TrendsComponent = ({
     return Object.values(dateMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
   }, [historyData]);
 
-  const colors = ["#4f46e5", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
-  const customPieColors = ["#002b3d", "#00425c", "#005978", "#007399", "#008cba", "#00a6db", "#33ccff"];
+  const colors = ["#044a63", "#ad4385", "#ffa600", "#f75c5c", "#5480B3", "#D8A130", "#7a4387"];
+  const customPieColors = ["#044a63", "#073763", "#2f3971", "#44407b", "#7a4387", "#ad4385", "#d94875", "#f75c5c", "#ff7e3b", "#ffa600"];
   const pagination = historyData?.pagination;
 
   const tagPieData = useMemo(() => {
@@ -596,26 +699,29 @@ const TrendsComponent = ({
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 col-span-1 min-h-[400px]">
           <h2 className="text-base font-semibold text-gray-900 mb-1">Product Categories</h2>
           <p className="text-xs text-gray-400 mb-4">Search volume volume distribution. Click to filter.</p>
-          <div className="h-64">
+          <div className="h-80 overflow-visible">
             {tagPieData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
+                <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                   <Pie
                     data={tagPieData}
                     cx="50%" cy="50%"
-                    innerRadius={0} outerRadius={75}
+                    innerRadius={0} outerRadius={60}
                     dataKey="value"
                     stroke="#ffffff"
                     strokeWidth={2}
                     labelLine={{ stroke: '#9ca3af', strokeWidth: 1 }}
-                    label={({ name, percent }: any) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                    label={({ name, percent }: any) => {
+                      const short = name.length > 16 ? name.slice(0, 14) + '..' : name;
+                      return `${short} (${(percent * 100).toFixed(0)}%)`;
+                    }}
                     onClick={(_: any, index: number) => {
                       const name = tagPieData[index]?.name;
                       if (name === 'Other') return;
                       setSelectedTag(prev => prev === name ? '' : name);
                       setPage(1);
                     }}
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer', fontSize: '11px' }}
                   >
                     {tagPieData.map((entry: any, i: number) => (
                       <Cell
@@ -775,7 +881,7 @@ const TrendsComponent = ({
 
 export const TrendsView = () => <TrendsComponent />;
 export const DeclinesView = () => <TrendsComponent filterType="declines" defaultSortKey="netChange" defaultSortDir="asc" title="Biggest Declines (Top 5)" />;
-export const ImprovementsView = () => <TrendsComponent filterType="improvements" defaultSortKey="netChange" defaultSortDir="desc" title="Biggest Improvements (Top 5)" />;
+export const ImprovementsView = () => <TrendsComponent filterType="improvements" defaultSortKey="volume" defaultSortDir="desc" title="Biggest Improvements (Top 5)" />;
 export const FirstPageView = () => <TrendsComponent filterType="first_page" defaultSortKey="volume" defaultSortDir="desc" title="Rank First Page (Top 5 Volume)" />;
 export const Top3View = () => <TrendsComponent filterType="top_3" defaultSortKey="volume" defaultSortDir="desc" title="Rank Top 3 (Top 5 Volume)" />;
 
@@ -787,7 +893,7 @@ const MoversView = () => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
   const [direction, setDirection] = useState('all');
   const [keywordSearch, setKeywordSearch] = useState('');
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'netChange', dir: 'desc' });
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'volume', dir: 'desc' });
 
   const { data: moversData, isLoading } = useQuery({
     queryKey: ['top-movers', dateFrom, dateTo, direction],
