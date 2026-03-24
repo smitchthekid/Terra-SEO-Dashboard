@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useOutletContext } from 'react-router-dom';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Download } from 'lucide-react';
 import { getHighImpactItems, ALL_DATES } from './dataStore';
+import { downloadCsv } from './csvUtils';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
     ResponsiveContainer, Legend, PieChart, Pie, Cell
@@ -168,6 +169,25 @@ export const HighImpactView = () => {
         setSortConfig(prev => ({
             key, dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc'
         }));
+    };
+
+    const exportCsv = () => {
+        const headers = ['Keyword', 'Volume', 'Tags', 'Cur Rank', 'Prev Rank', 'Rank Change', 'Impact Score', 'Power Score', 'Hist Avg', 'Hist Best', 'Hist Worst', 'Visibility Loss'];
+        const rows = sortedItems.map((r: any) => [
+            r.keyword,
+            r.volume,
+            r.tags?.join('; ') ?? '',
+            r.currentRank ?? '',
+            r.previous90dRank ?? '',
+            r.rankChange ?? '',
+            r.impactScore ?? '',
+            r.powerScore ?? '',
+            r.histAvg ?? '',
+            r.histMin ?? '',
+            r.histMax ?? '',
+            r.visibilityLoss ?? '',
+        ]);
+        downloadCsv('high-impact-items.csv', headers, rows);
     };
 
     const lineColors = ["#044a63", "#ad4385", "#ffa600", "#f75c5c", "#5480B3"];
@@ -341,9 +361,18 @@ export const HighImpactView = () => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="p-5 border-b border-gray-200 flex items-center justify-between">
                     <h3 className="text-lg font-medium text-gray-900">Keyword Details</h3>
-                    <span className="text-sm text-gray-500">
-                        Showing {sortedItems.length} of {items.length} keywords
-                    </span>
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm text-gray-500">
+                            Showing {sortedItems.length} of {items.length} keywords
+                        </span>
+                        <button
+                            onClick={exportCsv}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                        >
+                            <Download className="w-3.5 h-3.5" />
+                            Export CSV
+                        </button>
+                    </div>
                 </div>
 
                 {/* Table */}

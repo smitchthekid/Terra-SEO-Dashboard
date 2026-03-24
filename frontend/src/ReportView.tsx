@@ -6,7 +6,8 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
     PieChart, Pie, Sector,
 } from 'recharts';
-import { Search, ArrowUpDown, ChevronDown, ChevronUp, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ArrowUpDown, ChevronDown, ChevronUp, ExternalLink, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { downloadCsv } from './csvUtils';
 
 type AppContextType = {
     dateFrom: string;
@@ -187,6 +188,38 @@ export default function ReportView() {
     const categoryTrends = useMemo(() => {
         return sortData(reportData?.categoryTrends || [], categoriesSort);
     }, [reportData, categoriesSort, sortData]);
+
+    const exportCsv = () => {
+        const configs: Record<string, { filename: string; headers: string[]; rows: (string | number | null | undefined)[][] }> = {
+            trends: {
+                filename: 'seo-report-trends.csv',
+                headers: ['Trend', 'FPCP Delta', 'Rank Now', 'Rank Was', 'Count'],
+                rows: trends.map((r: any) => [r.trend, r.fpcp_delta, r.rank_now, r.rank_was, r.count]),
+            },
+            declines: {
+                filename: 'seo-report-declines.csv',
+                headers: ['Query', 'Volume', 'FPCP Delta', 'Rank Change', 'Rank Was', 'Rank Now'],
+                rows: clickDeclines.map((r: any) => [r.query, r.volume, r.fpcp_delta, r.rank_delta, r.rank_was, r.rank_now]),
+            },
+            gains: {
+                filename: 'seo-report-gains.csv',
+                headers: ['Query', 'Volume', 'FPCP Delta', 'Pos Gained', 'Rank Was', 'Rank Now'],
+                rows: clickGains.map((r: any) => [r.query, r.volume, r.fpcp_delta, r.positions_gained, r.rank_was, r.rank_now]),
+            },
+            combined: {
+                filename: 'seo-report-query-url.csv',
+                headers: ['URL', 'Query', 'Volume', 'FPCP Delta', 'Rank Delta', 'Rank Was', 'Rank Now'],
+                rows: queryUrlCombined.map((r: any) => [r.canonical_url, r.query, r.volume, r.fpcp_delta, r.rank_delta, r.rank_was, r.rank_now]),
+            },
+            categories: {
+                filename: 'seo-report-categories.csv',
+                headers: ['Category', 'FPCP Delta', 'Rank Now', 'Rank Was', 'Count'],
+                rows: categoryTrends.map((r: any) => [r.query_category, r.fpcp_delta, r.rank_now, r.rank_was, r.count]),
+            },
+        };
+        const cfg = configs[activeTab];
+        if (cfg) downloadCsv(cfg.filename, cfg.headers, cfg.rows);
+    };
 
     // Pie chart data
     const trendPieData = useMemo(() => {
@@ -432,7 +465,7 @@ export default function ReportView() {
                             </button>
                         ))}
                     </div>
-                    <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                    <div className="flex items-center gap-3 ml-4 flex-shrink-0">
                         <Search className="w-4 h-4 text-gray-400" />
                         <input
                             type="text"
@@ -441,6 +474,13 @@ export default function ReportView() {
                             placeholder="Connected search..."
                             className="text-sm border-0 border-b border-gray-200 focus:ring-0 focus:border-indigo-500 py-1 w-48 bg-transparent"
                         />
+                        <button
+                            onClick={exportCsv}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors"
+                        >
+                            <Download className="w-3.5 h-3.5" />
+                            Export CSV
+                        </button>
                     </div>
                 </div>
 

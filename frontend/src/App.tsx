@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext, Navigate } from 'react-router-dom';
-import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp, AlertTriangle, Download } from 'lucide-react';
+import { downloadCsv } from './csvUtils';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 
 import { useDropzone } from 'react-dropzone';
@@ -689,6 +690,37 @@ const TrendsComponent = ({
     });
   };
 
+  const [trendsExporting, setTrendsExporting] = useState(false);
+  const exportTrendsCsv = async () => {
+    setTrendsExporting(true);
+    try {
+      const all = await getPositionsHistory({
+        date_from: dateFrom,
+        date_to: dateTo,
+        keyword_search: keywordSearch,
+        page: 1,
+        limit: 9999,
+        sort: sortConfig.key,
+        order: sortConfig.dir,
+        filter_type: filterType,
+        selection,
+      });
+      const headers = ['Keyword', 'Volume', 'Tags', 'Avg Pos', 'Best Pos', 'Change', 'Trend'];
+      const rows = (all.data as any[] || []).map((r: any) => [
+        r.keyword,
+        r.volume,
+        (r.tags as string[] || []).join('; '),
+        r.metrics?.avgPos ?? '',
+        r.metrics?.bestPos ?? '',
+        r.metrics?.netChange ?? '',
+        r.metrics?.trend ?? '',
+      ]);
+      downloadCsv(`trends-${filterType || 'all'}.csv`, headers, rows);
+    } finally {
+      setTrendsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Filters */}
@@ -804,11 +836,21 @@ const TrendsComponent = ({
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-5 border-b border-gray-200 flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900">Keyword Details</h3>
-          {pagination && (
-            <span className="text-sm text-gray-500">
-              Showing {((pagination.page - 1) * pagination.limit) + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total.toLocaleString()}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {pagination && (
+              <span className="text-sm text-gray-500">
+                Showing {((pagination.page - 1) * pagination.limit) + 1}-{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total.toLocaleString()}
+              </span>
+            )}
+            <button
+              onClick={exportTrendsCsv}
+              disabled={trendsExporting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {trendsExporting ? 'Exporting...' : 'Export CSV'}
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left">
@@ -986,6 +1028,21 @@ const MoversView = () => {
     setKeywordSearch(keyword === keywordSearch ? '' : keyword);
   };
 
+  const exportMoversCsv = () => {
+    const headers = ['Keyword', 'Volume', 'Tags', 'Start Pos', 'End Pos', 'Net Change', 'Avg Pos', 'Trend'];
+    const rows = items.map((r: any) => [
+      r.keyword,
+      r.volume,
+      (r.tags as string[] || []).join('; '),
+      r.metrics?.startPos ?? '',
+      r.metrics?.endPos ?? '',
+      r.metrics?.netChange ?? '',
+      r.metrics?.avgPos ?? '',
+      r.metrics?.trend ?? '',
+    ]);
+    downloadCsv('movers.csv', headers, rows);
+  };
+
   // Chart data for top movers
   const barData = useMemo(() => {
     return items.slice(0, 15).map((item: any) => ({
@@ -1069,10 +1126,17 @@ const MoversView = () => {
 
       {/* Movers table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-5 border-b border-gray-200">
+        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900">
             {direction === 'raised' ? 'Most Improved Keywords' : direction === 'dropped' ? 'Most Declined Keywords' : 'Largest Position Changes'}
           </h3>
+          <button
+            onClick={exportMoversCsv}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Export CSV
+          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left">
@@ -1195,6 +1259,14 @@ const TagsView = () => {
     }))
   , [tagData]);
 
+  const exportTagsCsv = () => {
+    const headers = ['Category', 'Keywords', 'Total Volume', 'Avg Position', 'Raised', 'Dropped', 'Unchanged'];
+    const rows = items.map((r: any) => [
+      r.tag, r.keywords, r.totalVolume, r.avgPosition, r.raised, r.dropped, r.unchanged,
+    ]);
+    downloadCsv('product-categories.csv', headers, rows);
+  };
+
   const timelineTags = timelineData?.tags || [];
   const timelineRows = timelineData?.timeline || [];
 
@@ -1306,7 +1378,16 @@ const TagsView = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="p-5 border-b border-gray-200 flex items-center justify-between">
           <h3 className="text-lg font-medium text-gray-900">All Categories</h3>
-          <span className="text-sm text-gray-500">Showing {items.length} categories</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500">Showing {items.length} categories</span>
+            <button
+              onClick={exportTagsCsv}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 text-gray-600 bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export CSV
+            </button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left">
