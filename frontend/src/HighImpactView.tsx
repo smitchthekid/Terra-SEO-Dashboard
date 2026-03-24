@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useOutletContext } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 import { getHighImpactItems, ALL_DATES } from './dataStore';
 import {
@@ -30,18 +31,25 @@ const SortableHeader = ({
     </th>
 );
 
+type AppContextType = {
+    dateFrom: string;
+    dateTo: string;
+    setDateFrom: (d: string) => void;
+    setDateTo: (d: string) => void;
+    selection: { keywords: string[]; tags: string[] };
+    setSelection: React.Dispatch<React.SetStateAction<{ keywords: string[]; tags: string[] }>>;
+};
+
 type VisibilityFilter = 'all' | 'lost_top_5' | 'lost_top_10';
 
 export const HighImpactView = () => {
+    const { selection, setSelection } = useOutletContext<AppContextType>();
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'rankChange', dir: 'desc' });
     const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>('all');
-    const [selectedTag, setSelectedTag] = useState('');
 
     const { data: items = [], isLoading } = useQuery({
-        queryKey: ['high-impact-items'],
-        queryFn: async () => {
-            return getHighImpactItems();
-        },
+        queryKey: ['high-impact-items', selection],
+        queryFn: () => getHighImpactItems(selection),
     });
 
     // Apply visibility and tag filters
@@ -49,21 +57,21 @@ export const HighImpactView = () => {
         let result = [...items];
 
         if (visibilityFilter === 'lost_top_5') {
-            result = result.filter((r: any) => r.visibilityLoss === 'Lost Top 5');
+            result = result.filter((r: any) => r.visibilityLoss?.includes('Lost Top 5'));
         } else if (visibilityFilter === 'lost_top_10') {
-            result = result.filter((r: any) =>
-                r.visibilityLoss === 'Lost Top 5' || r.visibilityLoss === 'Lost Top 10'
-            );
+            result = result.filter((r: any) => r.visibilityLoss === 'Lost Top 10');
         }
 
-        if (selectedTag) {
+        if (selection.tags.length > 0) {
             result = result.filter((r: any) =>
-                r.tags?.some((t: string) => t.toLowerCase() === selectedTag.toLowerCase())
+                r.tags?.some((itemTag: string) =>
+                    selection.tags.some(selectedTag => selectedTag.toLowerCase() === itemTag.toLowerCase())
+                )
             );
         }
 
         return result;
-    }, [items, visibilityFilter, selectedTag]);
+    }, [items, visibilityFilter, selection.tags]);
 
     // Sort items
     const sortedItems = useMemo(() => {
@@ -150,7 +158,7 @@ export const HighImpactView = () => {
         let lostTop5 = 0;
         let lostFirstPage = 0;
         items.forEach((item: any) => {
-            if (item.visibilityLoss === 'Lost Top 5') { lostTop5++; lostFirstPage++; }
+            if (item.visibilityLoss === 'Lost Top 5') lostTop5++;
             else if (item.visibilityLoss === 'Lost Top 10') lostFirstPage++;
         });
         return { lostTop5, lostFirstPage };
@@ -203,13 +211,15 @@ export const HighImpactView = () => {
                     >
                         Lost First Page ({filterCounts.lostFirstPage})
                     </button>
-                    {selectedTag && (
-                        <div className="flex items-center gap-2 ml-4 pl-4 border-l border-gray-200">
-                            <span className="text-xs text-gray-500">Category:</span>
-                            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">{selectedTag}</span>
+                    {selection.tags.length > 0 && (
+                        <div className="flex items-center gap-2 ml-4 pl-4 border-l border-gray-200 overflow-x-auto max-w-[400px]">
+                            <span className="text-xs text-gray-500 whitespace-nowrap">Tags:</span>
+                            {selection.tags.map(tag => (
+                                <span key={tag} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 whitespace-nowrap">{tag}</span>
+                            ))}
                             <button
-                                onClick={() => setSelectedTag('')}
-                                className="text-xs text-gray-400 hover:text-gray-600 underline"
+                                onClick={() => setSelection(prev => ({ ...prev, tags: [] }))}
+                                className="text-xs text-gray-400 hover:text-gray-600 underline whitespace-nowrap"
                             >
                                 Clear
                             </button>
@@ -243,7 +253,11 @@ export const HighImpactView = () => {
                                         onClick={(_: any, index: number) => {
                                             const name = categoryPieData[index]?.name;
                                             if (name === 'Other') return;
-                                            setSelectedTag(prev => prev === name ? '' : name);
+                                            setSelection(prev => {
+                                                const exists = prev.tags.includes(name);
+                                                if (exists) return { ...prev, tags: prev.tags.filter(t => t !== name) };
+                                                return { ...prev, tags: [...prev.tags, name] };
+                                            });
                                         }}
                                         style={{ cursor: 'pointer', fontSize: '11px' }}
                                     >
@@ -251,7 +265,7 @@ export const HighImpactView = () => {
                                             <Cell
                                                 key={`cell-${i}`}
                                                 fill={pieColors[i % pieColors.length]}
-                                                opacity={selectedTag && selectedTag !== _entry.name ? 0.3 : 1}
+                                                opacity={selection.tags.length > 0 && !selection.tags.includes(_entry.name) ? 0.3 : 1}
                                             />
                                         ))}
                                     </Pie>
@@ -337,6 +351,21 @@ export const HighImpactView = () => {
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
+                                <th className="px-6 py-4 w-10">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        checked={sortedItems.length > 0 && sortedItems.every(r => selection.keywords.includes(r.keyword))}
+                                        onChange={(e) => {
+                                            const allKws = sortedItems.map(r => r.keyword);
+                                            if (e.target.checked) {
+                                                setSelection(prev => ({ ...prev, keywords: Array.from(new Set([...prev.keywords, ...allKws])) }));
+                                            } else {
+                                                setSelection(prev => ({ ...prev, keywords: prev.keywords.filter(k => !allKws.includes(k)) }));
+                                            }
+                                        }}
+                                    />
+                                </th>
                                 <SortableHeader label="Keyword" sortKey="keyword" current={sortConfig} onSort={toggleSort} />
                                 <SortableHeader label="Volume" sortKey="volume" current={sortConfig} onSort={toggleSort} align="right" />
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</th>
@@ -353,16 +382,32 @@ export const HighImpactView = () => {
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {isLoading ? (
-                                <tr><td colSpan={12} className="px-6 py-8 text-center text-sm font-medium text-gray-500 animate-pulse">Calculating custom metrics...</td></tr>
+                                <tr><td colSpan={13} className="px-6 py-8 text-center text-sm font-medium text-gray-500 animate-pulse">Calculating custom metrics...</td></tr>
                             ) : sortedItems.length === 0 ? (
-                                <tr><td colSpan={12} className="px-6 py-8 text-center text-sm text-gray-500">No items match the current filters.</td></tr>
+                                <tr><td colSpan={13} className="px-6 py-8 text-center text-sm text-gray-500">No items match the current filters.</td></tr>
                             ) : sortedItems.map((row: any, i: number) => {
                                 const isWarning = row.inspectionRequired;
                                 const pScoreNegative = row.powerScore !== null && row.powerScore < 0;
+                                const isSelected = selection.keywords.includes(row.keyword);
+                                const handleToggle = () => {
+                                    setSelection(prev => {
+                                        const exists = prev.keywords.includes(row.keyword);
+                                        if (exists) return { ...prev, keywords: prev.keywords.filter(k => k !== row.keyword) };
+                                        return { ...prev, keywords: [...prev.keywords, row.keyword] };
+                                    });
+                                };
 
                                 return (
-                                    <tr key={i} className={`hover:bg-gray-50 ${isWarning ? 'bg-amber-50/30' : ''}`}>
-                                        <td className="px-6 py-4 text-sm font-medium text-gray-900 border-l-4 border-transparent" style={{ borderLeftColor: isWarning ? '#f59e0b' : 'transparent' }}>
+                                    <tr key={i} onClick={handleToggle} className={`cursor-pointer hover:bg-gray-50 transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : (isWarning ? 'bg-amber-50/30' : '')}`}>
+                                        <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
+                                            <input
+                                                type="checkbox"
+                                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                checked={isSelected}
+                                                onChange={handleToggle}
+                                            />
+                                        </td>
+                                        <td className="px-6 py-4 text-sm font-medium text-gray-900 border-l-4 border-transparent">
                                             <div className="flex items-center">
                                                 {isWarning && <AlertTriangle className="w-4 h-4 text-amber-500 mr-2 flex-shrink-0" />}
                                                 {row.keyword}
@@ -374,11 +419,18 @@ export const HighImpactView = () => {
                                                 {row.tags?.slice(0, 2).map((t: string) => (
                                                     <span
                                                         key={t}
-                                                        className={`px-1.5 py-0.5 rounded text-xs font-medium cursor-pointer transition-colors ${selectedTag === t
-                                                            ? 'bg-indigo-200 text-indigo-800'
+                                                        className={`px-1.5 py-0.5 rounded text-xs font-medium cursor-pointer transition-colors ${selection.tags.includes(t)
+                                                            ? 'bg-indigo-600 text-white'
                                                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                                             }`}
-                                                        onClick={() => setSelectedTag(prev => prev === t ? '' : t)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelection(prev => {
+                                                                const exists = prev.tags.includes(t);
+                                                                if (exists) return { ...prev, tags: prev.tags.filter(k => k !== t) };
+                                                                return { ...prev, tags: [...prev.tags, t] };
+                                                            });
+                                                        }}
                                                     >
                                                         {t}
                                                     </span>

@@ -13,6 +13,8 @@ type AppContextType = {
     dateTo: string;
     setDateFrom: (d: string) => void;
     setDateTo: (d: string) => void;
+    selection: { keywords: string[]; tags: string[] };
+    setSelection: React.Dispatch<React.SetStateAction<{ keywords: string[]; tags: string[] }>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -104,7 +106,7 @@ function Pagination({ total, page, limit, onPageChange }: { total: number, page:
 // ---------------------------------------------------------------------------
 
 export default function ReportView() {
-    const { } = useOutletContext<AppContextType>();
+    const { selection, setSelection } = useOutletContext<AppContextType>();
 
     // Filters
     const [queryContains, setQueryContains] = useState('');
@@ -135,9 +137,16 @@ export default function ReportView() {
     }, [activeTab, queryContains, urlContains, trendsSort, declinesSort, gainsSort, combinedSort, categoriesSort, selectedTrendBucket, selectedMovement, avgPosMax]);
 
     const { data: reportData, isLoading } = useQuery({
-        queryKey: ['seo-report', queryContains, urlContains, avgPosMax],
+        queryKey: ['seo-report', queryContains, urlContains, avgPosMax, selectedTrendBucket, selectedMovement, selection],
         queryFn: async () => {
-            return getSeoReport({ queryContains, urlContains, avg_position_max: avgPosMax });
+            return getSeoReport({
+                queryContains,
+                urlContains,
+                avg_position_max: avgPosMax,
+                bucket: selectedTrendBucket,
+                movement: selectedMovement,
+                selection
+            });
         },
         staleTime: 30000,
     });
@@ -441,6 +450,7 @@ export default function ReportView() {
                         <table className="min-w-full divide-y divide-gray-200 text-left">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10 bg-gray-50"></th>
                                     <SortableHeader label="Trend" sortKey="trend" current={trendsSort} onSort={toggleSort(setTrendsSort)} />
                                     <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={trendsSort} onSort={toggleSort(setTrendsSort)} align="right" />
@@ -455,8 +465,9 @@ export default function ReportView() {
                                         <tr
                                             key={i}
                                             onClick={() => setSelectedTrendBucket(isSelected ? null : row.trend)}
-                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                                         >
+                                            <td className="px-4 py-3"></td>
                                             <td className="px-4 py-3 text-sm">
                                                 <span className="inline-flex items-center gap-1.5">
                                                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: TREND_COLORS[row.trend] || '#9ca3af' }} />
@@ -484,23 +495,53 @@ export default function ReportView() {
                         <table className="min-w-full divide-y divide-gray-200 text-left">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={clickDeclines.length > 0 && clickDeclines.every(r => selection.keywords.includes(r.query))}
+                                            onChange={(e) => {
+                                                const allQueries = clickDeclines.map(r => r.query);
+                                                if (e.target.checked) {
+                                                    setSelection(prev => ({ ...prev, keywords: Array.from(new Set([...prev.keywords, ...allQueries])) }));
+                                                } else {
+                                                    setSelection(prev => ({ ...prev, keywords: prev.keywords.filter(k => !allQueries.includes(k)) }));
+                                                }
+                                            }}
+                                        />
+                                    </th>
                                     <SortableHeader label="Query" sortKey="query" current={declinesSort} onSort={toggleSort(setDeclinesSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
-                                    <SortableHeader label="Rank Delta" sortKey="rank_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
+                                    <SortableHeader label="Rank Change" sortKey="rank_delta" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Was" sortKey="rank_was" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={declinesSort} onSort={toggleSort(setDeclinesSort)} align="right" />
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {clickDeclines.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
-                                    const isSelected = row.query === queryContains;
+                                    const isSelected = selection.keywords.includes(row.query);
+                                    const handleToggle = () => {
+                                        setSelection(prev => {
+                                            const exists = prev.keywords.includes(row.query);
+                                            if (exists) return { ...prev, keywords: prev.keywords.filter(k => k !== row.query) };
+                                            return { ...prev, keywords: [...prev.keywords, row.query] };
+                                        });
+                                    };
                                     return (
                                         <tr
                                             key={i}
-                                            onClick={() => setQueryContains(row.query === queryContains ? '' : row.query)}
-                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                                            onClick={handleToggle}
+                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                                         >
+                                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                    checked={isSelected}
+                                                    onChange={handleToggle}
+                                                />
+                                            </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
                                             <td className="px-4 py-3 text-sm font-bold text-red-600 text-right">{fmtDelta(row.fpcp_delta)}</td>
@@ -515,7 +556,7 @@ export default function ReportView() {
                                 {/* Grand Total */}
                                 {reportData?.declinesTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
-                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.declinesTotal.count})</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={3}>Grand Total ({reportData.declinesTotal.count})</td>
                                         <td className="px-4 py-3 text-sm text-red-700 text-right">{fmtDelta(reportData.declinesTotal.fpcp_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtDelta(reportData.declinesTotal.rank_delta, 2)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.declinesTotal.rank_was, 1)}</td>
@@ -534,6 +575,21 @@ export default function ReportView() {
                         <table className="min-w-full divide-y divide-gray-200 text-left">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={clickGains.length > 0 && clickGains.every(r => selection.keywords.includes(r.query))}
+                                            onChange={(e) => {
+                                                const allQueries = clickGains.map(r => r.query);
+                                                if (e.target.checked) {
+                                                    setSelection(prev => ({ ...prev, keywords: Array.from(new Set([...prev.keywords, ...allQueries])) }));
+                                                } else {
+                                                    setSelection(prev => ({ ...prev, keywords: prev.keywords.filter(k => !allQueries.includes(k)) }));
+                                                }
+                                            }}
+                                        />
+                                    </th>
                                     <SortableHeader label="Query" sortKey="query" current={gainsSort} onSort={toggleSort(setGainsSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
                                     <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={gainsSort} onSort={toggleSort(setGainsSort)} align="right" />
@@ -544,13 +600,28 @@ export default function ReportView() {
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {clickGains.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
-                                    const isSelected = row.query === queryContains;
+                                    const isSelected = selection.keywords.includes(row.query);
+                                    const handleToggle = () => {
+                                        setSelection(prev => {
+                                            const exists = prev.keywords.includes(row.query);
+                                            if (exists) return { ...prev, keywords: prev.keywords.filter(k => k !== row.query) };
+                                            return { ...prev, keywords: [...prev.keywords, row.query] };
+                                        });
+                                    };
                                     return (
                                         <tr
                                             key={i}
-                                            onClick={() => setQueryContains(row.query === queryContains ? '' : row.query)}
-                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                                            onClick={handleToggle}
+                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                                         >
+                                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                    checked={isSelected}
+                                                    onChange={handleToggle}
+                                                />
+                                            </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900 max-w-[300px] truncate" title={row.query}>{row.query}</td>
                                             <td className="px-4 py-3 text-sm font-medium text-gray-700 text-right">{fmtNum(row.volume)}</td>
                                             <td className="px-4 py-3 text-sm font-bold text-emerald-600 text-right">{fmtDelta(row.fpcp_delta)}</td>
@@ -563,7 +634,7 @@ export default function ReportView() {
                                 {/* Grand Total */}
                                 {reportData?.gainsTotal && (
                                     <tr className="bg-gray-50 font-bold border-t-2 border-gray-300">
-                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={2}>Grand Total ({reportData.gainsTotal.count})</td>
+                                        <td className="px-4 py-3 text-sm text-gray-900" colSpan={3}>Grand Total ({reportData.gainsTotal.count})</td>
                                         <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.fpcp_delta)}</td>
                                         <td className="px-4 py-3 text-sm text-emerald-700 text-right">{fmtDelta(reportData.gainsTotal.positions_gained, 2)}</td>
                                         <td className="px-4 py-3 text-sm text-gray-700 text-right">{fmtRank(reportData.gainsTotal.rank_was, 1)}</td>
@@ -582,6 +653,21 @@ export default function ReportView() {
                         <table className="min-w-full divide-y divide-gray-200 text-left">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={queryUrlCombined.length > 0 && queryUrlCombined.every(r => selection.keywords.includes(r.query))}
+                                            onChange={(e) => {
+                                                const allQueries = queryUrlCombined.map(r => r.query);
+                                                if (e.target.checked) {
+                                                    setSelection(prev => ({ ...prev, keywords: Array.from(new Set([...prev.keywords, ...allQueries])) }));
+                                                } else {
+                                                    setSelection(prev => ({ ...prev, keywords: prev.keywords.filter(k => !allQueries.includes(k)) }));
+                                                }
+                                            }}
+                                        />
+                                    </th>
                                     <SortableHeader label="URL" sortKey="canonical_url" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
                                     <SortableHeader label="Query" sortKey="query" current={combinedSort} onSort={toggleSort(setCombinedSort)} />
                                     <SortableHeader label="Volume" sortKey="volume" current={combinedSort} onSort={toggleSort(setCombinedSort)} align="right" />
@@ -593,16 +679,28 @@ export default function ReportView() {
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {queryUrlCombined.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
-                                    const isSelected = row.query === queryContains;
+                                    const isSelected = selection.keywords.includes(row.query);
+                                    const handleToggle = () => {
+                                        setSelection(prev => {
+                                            const exists = prev.keywords.includes(row.query);
+                                            if (exists) return { ...prev, keywords: prev.keywords.filter(k => k !== row.query) };
+                                            return { ...prev, keywords: [...prev.keywords, row.query] };
+                                        });
+                                    };
                                     return (
                                         <tr
                                             key={i}
-                                            onClick={(e) => {
-                                                if ((e.target as HTMLElement).closest('a')) return;
-                                                setQueryContains(row.query === queryContains ? '' : row.query);
-                                            }}
-                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                                            onClick={handleToggle}
+                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                                         >
+                                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                    checked={isSelected}
+                                                    onChange={handleToggle}
+                                                />
+                                            </td>
                                             <td className="px-4 py-3 text-sm text-indigo-600 max-w-[240px] truncate" title={row.canonical_url}>
                                                 {row.canonical_url ? (
                                                     <a href={row.canonical_url} target="_blank" rel="noopener noreferrer" className="hover:underline inline-flex items-center gap-1">
@@ -646,6 +744,21 @@ export default function ReportView() {
                         <table className="min-w-full divide-y divide-gray-200 text-left">
                             <thead className="bg-gray-50">
                                 <tr>
+                                    <th className="px-4 py-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={categoryTrends.length > 0 && categoryTrends.every(r => selection.tags.includes(r.query_category))}
+                                            onChange={(e) => {
+                                                const allCats = categoryTrends.map(r => r.query_category);
+                                                if (e.target.checked) {
+                                                    setSelection(prev => ({ ...prev, tags: Array.from(new Set([...prev.tags, ...allCats])) }));
+                                                } else {
+                                                    setSelection(prev => ({ ...prev, tags: prev.tags.filter(t => !allCats.includes(t)) }));
+                                                }
+                                            }}
+                                        />
+                                    </th>
                                     <SortableHeader label="Category" sortKey="query_category" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} />
                                     <SortableHeader label="FPCP Delta" sortKey="fpcp_delta" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
                                     <SortableHeader label="Rank Now" sortKey="rank_now" current={categoriesSort} onSort={toggleSort(setCategoriesSort)} align="right" />
@@ -655,13 +768,28 @@ export default function ReportView() {
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {categoryTrends.slice((page - 1) * limit, page * limit).map((row: any, i: number) => {
-                                    const isSelected = row.query_category === queryContains;
+                                    const isSelected = selection.tags.includes(row.query_category);
+                                    const handleToggle = () => {
+                                        setSelection(prev => {
+                                            const exists = prev.tags.includes(row.query_category);
+                                            if (exists) return { ...prev, tags: prev.tags.filter(t => t !== row.query_category) };
+                                            return { ...prev, tags: [...prev.tags, row.query_category] };
+                                        });
+                                    };
                                     return (
                                         <tr
                                             key={i}
-                                            onClick={() => setQueryContains(row.query_category === queryContains ? '' : row.query_category)}
-                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                                            onClick={handleToggle}
+                                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                                         >
+                                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                    checked={isSelected}
+                                                    onChange={handleToggle}
+                                                />
+                                            </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-gray-900">{row.query_category}</td>
                                             <td className={`px-4 py-3 text-sm font-bold text-right ${row.fpcp_delta > 0 ? 'text-emerald-600' : row.fpcp_delta < 0 ? 'text-red-600' : 'text-gray-500'}`}>
                                                 {fmtDelta(row.fpcp_delta)}
