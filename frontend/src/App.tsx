@@ -4,7 +4,7 @@ import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, M
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 
 import { useDropzone } from 'react-dropzone';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie, Sector } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie } from 'recharts';
 import ReportView from './ReportView';
 import { HighImpactView } from './HighImpactView';
 import {
@@ -17,6 +17,7 @@ import {
   getTags,
   getTopMovers,
   getTagSummary,
+  getTagTimeline,
   getPositionsHistory,
   ALL_DATES
 } from './dataStore';
@@ -618,13 +619,9 @@ const TrendsComponent = ({
   const { data: historyData, isLoading } = useQuery({
     queryKey: ['positions-history', dateFrom, dateTo, keywordSearch, page, sortConfig, filterType, selection],
     queryFn: async () => {
-      // If global tags are selected, use the first one if the component expects a single tag,
-      // but my getPositionsHistory update handles multiple keywords.
-      // I should update getPositionsHistory call to pass the whole selection.
       return getPositionsHistory({
         date_from: dateFrom,
         date_to: dateTo,
-        tag: selection.tags[0] || '', // Keep single tag for legacy if needed, but getPositionsHistory now filters by selection.tags too
         keyword_search: keywordSearch,
         page,
         limit: 10,
@@ -1149,33 +1146,21 @@ const MoversView = () => {
 // Tags View (replaces Competitors)
 // ---------------------------------------------------------------------------
 
-const renderActiveShape = (props: any) => {
-  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill, payload, percent, value } = props;
-  return (
-    <g>
-      <text x={cx} y={cy - 10} textAnchor="middle" fill="#374151" fontSize={13} fontWeight={600}>
-        {payload.name}
-      </text>
-      <text x={cx} y={cy + 12} textAnchor="middle" fill="#6b7280" fontSize={11}>
-        {value.toLocaleString()} ({(percent * 100).toFixed(1)}%)
-      </text>
-      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 8} startAngle={startAngle} endAngle={endAngle} fill={fill} />
-      <Sector cx={cx} cy={cy} innerRadius={outerRadius + 12} outerRadius={outerRadius + 16} startAngle={startAngle} endAngle={endAngle} fill={fill} />
-    </g>
-  );
-};
+const TAG_COLORS = ["#044a63", "#ad4385", "#ffa600", "#f75c5c", "#5480B3", "#D8A130", "#7a4387", "#d94875"];
 
 const TagsView = () => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
   const [tagSearch, setTagSearch] = useState('');
-  const [activePie, setActivePie] = useState(0);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'totalVolume', dir: 'desc' });
 
   const { data: tagData, isLoading } = useQuery({
     queryKey: ['tag-summary', dateFrom, dateTo],
-    queryFn: async () => {
-      return getTagSummary({ date_from: dateFrom, date_to: dateTo });
-    },
+    queryFn: () => getTagSummary({ date_from: dateFrom, date_to: dateTo }),
+  });
+
+  const { data: timelineData } = useQuery({
+    queryKey: ['tag-timeline', dateFrom, dateTo],
+    queryFn: () => getTagTimeline({ date_from: dateFrom, date_to: dateTo, maxTags: 8 }),
   });
 
   const items = useMemo(() => {
@@ -1184,8 +1169,6 @@ const TagsView = () => {
       const q = tagSearch.toLowerCase();
       data = data.filter((t: any) => t.tag.toLowerCase().includes(q));
     }
-
-    // sorting
     return [...data].sort((a, b) => {
       const av = (a as any)[sortConfig.key] ?? 0;
       const bv = (b as any)[sortConfig.key] ?? 0;
@@ -1204,116 +1187,132 @@ const TagsView = () => {
     setTagSearch(tag === tagSearch ? '' : tag);
   };
 
-  // Chart for top tags by volume
-  const barData = items.slice(0, 10).map((t: any) => ({
-    tag: t.tag.length > 18 ? t.tag.slice(0, 18) + '...' : t.tag,
-    volume: t.totalVolume,
-    keywords: t.keywords,
-  }));
+  const barData = useMemo(() =>
+    (tagData?.data || []).slice(0, 10).map((t: any) => ({
+      tag: t.tag.length > 18 ? t.tag.slice(0, 18) + '...' : t.tag,
+      volume: t.totalVolume,
+      keywords: t.keywords,
+    }))
+  , [tagData]);
 
-  // Pie chart for aggregated movers of filtered tags
-  const pieData = useMemo(() => {
-    let raised = 0, dropped = 0, unchanged = 0;
-    items.forEach((t: any) => {
-      raised += t.raised;
-      dropped += t.dropped;
-      unchanged += t.unchanged;
-    });
-    return [
-      { name: 'Improved', value: raised, fill: '#10b981' },
-      { name: 'Declined', value: dropped, fill: '#ef4444' },
-      { name: 'Unchanged', value: unchanged, fill: '#9ca3af' },
-    ].filter(d => d.value > 0);
-  }, [items]);
+  const timelineTags = timelineData?.tags || [];
+  const timelineRows = timelineData?.timeline || [];
 
   return (
     <div className="space-y-6">
-      {/* Search Filter */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3">
-        <Search className="w-5 h-5 text-gray-400" />
-        <input
-          type="text"
-          value={tagSearch}
-          onChange={e => setTagSearch(e.target.value)}
-          placeholder="Filter tags by name..."
-          className="flex-1 text-sm border-0 focus:ring-0 p-1 outline-none"
-        />
+      {/* Header */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h2 className="text-xl font-semibold text-gray-900 mb-2">Product Categories</h2>
+        <p className="text-sm text-gray-500 mb-4">Performance breakdown by category tag, including volume, keyword count, and rank movement trends.</p>
+        <div className="flex items-center gap-3">
+          <Search className="w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            value={tagSearch}
+            onChange={e => setTagSearch(e.target.value)}
+            placeholder="Filter categories by name..."
+            className="flex-1 text-sm border-0 focus:ring-0 p-1 outline-none"
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h2 className="text-lg font-medium text-gray-900 mb-6">Volume & Keywords (Top 10)</h2>
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        {/* Bar chart - volume by category */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+          <h3 className="text-base font-semibold text-gray-900 mb-1">Volume by Category (Top 10)</h3>
+          <p className="text-xs text-gray-400 mb-4">Total search volume and keyword count per category.</p>
           {isLoading ? (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
-              <span className="text-gray-400 font-medium animate-pulse">Loading tags...</span>
+              <span className="text-gray-400 font-medium animate-pulse">Loading...</span>
             </div>
           ) : barData.length === 0 ? (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
-              <span className="text-gray-400 font-medium">No tag data</span>
+              <span className="text-gray-400 font-medium">No data</span>
             </div>
           ) : (
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <BarChart data={barData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="tag" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} dy={10} angle={-15} />
-                  <YAxis yAxisId="left" orientation="left" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="tag" tick={{ fontSize: 10, fill: '#6b7280' }} axisLine={false} tickLine={false} dy={10} angle={-20} textAnchor="end" />
+                  <YAxis yAxisId="left" orientation="left" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#6b7280' }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px', fontSize: '13px' }} />
-                  <Bar yAxisId="left" dataKey="volume" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="Total Volume" />
-                  <Bar yAxisId="right" dataKey="keywords" fill="#10b981" radius={[4, 4, 0, 0]} name="Keywords Count" />
+                  <Legend iconType="circle" wrapperStyle={{ paddingTop: '16px', fontSize: '12px' }} />
+                  <Bar yAxisId="left" dataKey="volume" fill="#044a63" radius={[4, 4, 0, 0]} name="Total Volume" />
+                  <Bar yAxisId="right" dataKey="keywords" fill="#ad4385" radius={[4, 4, 0, 0]} name="Keywords" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
         </div>
 
-        {/* Movers Pie Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h2 className="text-lg font-medium text-gray-900 mb-6">Movement Distribution (All Filtered)</h2>
+        {/* Timeline chart - avg position by category */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-3">
+          <h3 className="text-base font-semibold text-gray-900 mb-1">Avg Position Trend by Category</h3>
+          <p className="text-xs text-gray-400 mb-4">Average ranking position over time for top 8 categories. Lower is better.</p>
           {isLoading ? (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
-              <span className="text-gray-400 font-medium animate-pulse">Loading tags...</span>
+              <span className="text-gray-400 font-medium animate-pulse">Loading...</span>
             </div>
-          ) : pieData.length === 0 ? (
+          ) : timelineRows.length === 0 ? (
             <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
-              <span className="text-gray-400 font-medium">No movement data</span>
+              <span className="text-gray-400 font-medium">No timeline data available</span>
             </div>
           ) : (
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    {...{ activeIndex: activePie } as any}
-                    activeShape={renderActiveShape}
-                    data={pieData}
-                    cx="50%" cy="50%"
-                    innerRadius={60} outerRadius={80}
-                    dataKey="value"
-                    onMouseEnter={(_: any, index: number) => setActivePie(index)}
-                  >
-                    {pieData.map((entry: any, i: number) => (
-                      <Cell key={i} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={timelineRows} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11, fill: '#6b7280' }}
+                  axisLine={false}
+                  tickLine={false}
+                  dy={10}
+                />
+                <YAxis
+                  reversed
+                  tick={{ fontSize: 11, fill: '#6b7280' }}
+                  axisLine={false}
+                  tickLine={false}
+                  domain={['dataMin - 1', 'dataMax + 1']}
+                  label={{ value: 'Avg Position', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9ca3af' } }}
+                />
+                <Tooltip
+                  contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  itemStyle={{ fontSize: '12px', fontWeight: 500 }}
+                  labelStyle={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: '16px', fontSize: '11px' }} />
+                {timelineTags.map((tag, i) => (
+                  <Line
+                    key={tag}
+                    type="monotone"
+                    dataKey={tag}
+                    stroke={TAG_COLORS[i % TAG_COLORS.length]}
+                    strokeWidth={2}
+                    dot={{ r: 2, fill: TAG_COLORS[i % TAG_COLORS.length] }}
+                    connectNulls
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
           )}
         </div>
       </div>
 
+      {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-5 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">All Tags Performance</h3>
+        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
+          <h3 className="text-lg font-medium text-gray-900">All Categories</h3>
+          <span className="text-sm text-gray-500">Showing {items.length} categories</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left">
             <thead className="bg-gray-50">
               <tr>
-                <SortableHeader label="Tag" sortKey="tag" current={sortConfig} onSort={toggleSort} />
+                <SortableHeader label="Category" sortKey="tag" current={sortConfig} onSort={toggleSort} />
                 <SortableHeader label="Keywords" sortKey="keywords" current={sortConfig} onSort={toggleSort} align="right" />
                 <SortableHeader label="Total Volume" sortKey="totalVolume" current={sortConfig} onSort={toggleSort} align="right" />
                 <SortableHeader label="Avg Position" sortKey="avgPosition" current={sortConfig} onSort={toggleSort} align="right" />

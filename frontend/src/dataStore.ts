@@ -899,3 +899,47 @@ export function getTagSummary(query: any) {
         dateRange: { from: dateFrom, to: dateTo },
     };
 }
+
+export function getTagTimeline(query: { date_from?: string; date_to?: string; maxTags?: number }) {
+    const sortedAllDates = ALL_DATES.slice().sort();
+    const dateFrom = query.date_from || sortedAllDates[0] || '';
+    const dateTo = query.date_to || sortedAllDates[sortedAllDates.length - 1] || '';
+    const maxTags = query.maxTags ?? 8;
+
+    const filteredDates = sortedAllDates.filter(d => d >= dateFrom && d <= dateTo);
+
+    // Aggregate volume per tag and collect keywords per tag
+    const tagVolume: Record<string, number> = {};
+    const tagKeywords: Record<string, KeywordRecord[]> = {};
+    KEYWORDS.forEach(kw => {
+        kw.tags.forEach(tag => {
+            if (!tagVolume[tag]) { tagVolume[tag] = 0; tagKeywords[tag] = []; }
+            tagVolume[tag] += kw.volume;
+            tagKeywords[tag].push(kw);
+        });
+    });
+
+    // Top tags by volume
+    const topTags = Object.entries(tagVolume)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, maxTags)
+        .map(([tag]) => tag);
+
+    // Build timeline rows: one per date, one key per tag = avg position
+    const timeline = filteredDates.map(date => {
+        const row: Record<string, string | number> = { date };
+        topTags.forEach(tag => {
+            const positions = tagKeywords[tag]
+                .map(kw => kw.positions[date])
+                .filter((p): p is number => p !== null && p !== undefined);
+            if (positions.length > 0) {
+                row[tag] = parseFloat(
+                    (positions.reduce((a, b) => a + b, 0) / positions.length).toFixed(1)
+                );
+            }
+        });
+        return row;
+    });
+
+    return { tags: topTags, timeline };
+}

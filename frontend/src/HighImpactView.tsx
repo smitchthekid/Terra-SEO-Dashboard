@@ -59,7 +59,7 @@ export const HighImpactView = () => {
         if (visibilityFilter === 'lost_top_5') {
             result = result.filter((r: any) => r.visibilityLoss?.includes('Lost Top 5'));
         } else if (visibilityFilter === 'lost_top_10') {
-            result = result.filter((r: any) => r.visibilityLoss?.includes('Lost Top 10'));
+            result = result.filter((r: any) => r.visibilityLoss === 'Lost Top 10');
         }
 
         if (selection.tags.length > 0) {
@@ -158,7 +158,7 @@ export const HighImpactView = () => {
         let lostTop5 = 0;
         let lostFirstPage = 0;
         items.forEach((item: any) => {
-            if (item.visibilityLoss === 'Lost Top 5') { lostTop5++; lostFirstPage++; }
+            if (item.visibilityLoss === 'Lost Top 5') lostTop5++;
             else if (item.visibilityLoss === 'Lost Top 10') lostFirstPage++;
         });
         return { lostTop5, lostFirstPage };
@@ -375,8 +375,8 @@ export const HighImpactView = () => {
                                 <SortableHeader label="Impact Score" sortKey="impactScore" current={sortConfig} onSort={toggleSort} align="right" />
                                 <SortableHeader label="Power Score" sortKey="powerScore" current={sortConfig} onSort={toggleSort} align="right" />
                                 <SortableHeader label="Hist Avg" sortKey="histAvg" current={sortConfig} onSort={toggleSort} align="right" />
-                                <SortableHeader label="Hist Best" sortKey="histBest" current={sortConfig} onSort={toggleSort} align="right" />
-                                <SortableHeader label="Hist Worst" sortKey="histWorst" current={sortConfig} onSort={toggleSort} align="right" />
+                                <SortableHeader label="Hist Best" sortKey="histMin" current={sortConfig} onSort={toggleSort} align="right" />
+                                <SortableHeader label="Hist Worst" sortKey="histMax" current={sortConfig} onSort={toggleSort} align="right" />
                                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-center">Alerts</th>
                             </tr>
                         </thead>
