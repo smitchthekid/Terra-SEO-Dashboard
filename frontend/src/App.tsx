@@ -508,7 +508,7 @@ const ProtectedLayout = () => {
 // ---------------------------------------------------------------------------
 
 const Dashboard = () => {
-  const { dateFrom, dateTo, selection, setSelection } = useOutletContext<AppContextType>();
+  const { dateFrom, dateTo, selection } = useOutletContext<AppContextType>();
 
   const { data: info } = useQuery({
     queryKey: ['data-info', dateFrom, dateTo, selection],
