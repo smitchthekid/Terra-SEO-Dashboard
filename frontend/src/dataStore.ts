@@ -9,6 +9,11 @@ export interface KeywordRecord {
     expectedUrl: string;
 }
 
+export interface SelectionState {
+    keywords: string[];
+    tags: string[];
+}
+
 export let KEYWORDS: KeywordRecord[] = [];
 export let ALL_DATES: string[] = [];
 
@@ -247,20 +252,31 @@ export function getPositionsHistory(query: any) {
     const sortBy = query.sort || 'volume';
     const order = query.order || 'desc';
     const filterType = query.filter_type || '';
+    const selection = query.selection as SelectionState | undefined;
 
     let filtered = KEYWORDS;
 
-    if (tagFilter) {
-        const tags = tagFilter.split(',').map((t: string) => t.trim().toLowerCase());
-        filtered = filtered.filter(kw =>
-            kw.tags.some(t => tags.includes(t.toLowerCase()))
-        );
+    if (selection && selection.keywords.length > 0) {
+        filtered = filtered.filter(kw => selection.keywords.includes(kw.keyword));
+    } else {
+        if (tagFilter) {
+            const tags = tagFilter.split(',').map((t: string) => t.trim().toLowerCase());
+            filtered = filtered.filter(kw =>
+                kw.tags.some(t => tags.includes(t.toLowerCase()))
+            );
+        }
+
+        if (keywordSearch) {
+            const search = keywordSearch.toLowerCase();
+            filtered = filtered.filter(kw =>
+                kw.keyword.toLowerCase().includes(search)
+            );
+        }
     }
 
-    if (keywordSearch) {
-        const search = keywordSearch.toLowerCase();
+    if (selection && selection.tags.length > 0) {
         filtered = filtered.filter(kw =>
-            kw.keyword.toLowerCase().includes(search)
+            kw.tags.some(t => selection.tags.includes(t))
         );
     }
 
@@ -430,7 +446,7 @@ function assignRankMovement(rankPrev: number | null, rankNow: number | null): st
     return 'No Change';
 }
 
-function buildReportData(queryContains: string, urlContains: string, avgPosMax: number, lastCheckedDays: number): { records: ReportRecord[], newestDate: string | null, previousDate: string | null, daysInterval: number } {
+function buildReportData(queryContains: string, urlContains: string, avgPosMax: number, lastCheckedDays: number, selection?: SelectionState): { records: ReportRecord[], newestDate: string | null, previousDate: string | null, daysInterval: number } {
     const sortedDates = ALL_DATES.slice().sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
     if (sortedDates.length === 0) return { records: [], newestDate: null, previousDate: null, daysInterval: 0 };
 
@@ -463,8 +479,20 @@ function buildReportData(queryContains: string, urlContains: string, avgPosMax: 
     for (const kw of KEYWORDS) {
         const lastCheck = getLastCheckDate(kw);
         if (!lastCheck || lastCheck < lastCheckedCutoff) continue;
-        if (queryContains && !kw.keyword.toLowerCase().includes(queryContains.toLowerCase())) continue;
-        if (urlContains && !kw.urlInSerp.toLowerCase().includes(urlContains.toLowerCase())) continue;
+
+        // Apply filters only if no broad selection is active
+        if (!selection || (selection.keywords.length === 0 && selection.tags.length === 0)) {
+            if (queryContains && !kw.keyword.toLowerCase().includes(queryContains.toLowerCase())) continue;
+            if (urlContains && !kw.urlInSerp.toLowerCase().includes(urlContains.toLowerCase())) continue;
+        }
+
+        // Apply global selection
+        if (selection && selection.keywords.length > 0) {
+            if (!selection.keywords.includes(kw.keyword)) continue;
+        }
+        if (selection && selection.tags.length > 0) {
+            if (!kw.tags.some(t => selection.tags.includes(t))) continue;
+        }
 
         const rankLast = kw.positions[newestDate] ?? null;
         const rankPrev = previousDate ? (kw.positions[previousDate] ?? null) : null;
@@ -505,8 +533,15 @@ export function getSeoReport(query: any) {
     const urlContains = query.urlContains || '';
     const avgPosMax = parseFloat(query.avg_position_max) || 200;
     const lastCheckedDays = parseInt(query.last_checked_days) || 30;
+    const selection = query.selection as SelectionState | undefined;
 
-    const { records, newestDate, previousDate, daysInterval } = buildReportData(queryContains, urlContains, avgPosMax, lastCheckedDays) as any;
+    const { records: allRecords, newestDate, previousDate, daysInterval } = buildReportData(queryContains, urlContains, avgPosMax, lastCheckedDays, selection) as any;
+
+    const records = allRecords.filter((r: any) => {
+        if (query.bucket && r.trend_bucket !== query.bucket) return false;
+        if (query.movement && r.rank_movement !== query.movement) return false;
+        return true;
+    });
 
     const totalFpcpNow = records.reduce((s: any, r: any) => s + r.fpcp_now, 0);
     const totalFpcpWas = records.reduce((s: any, r: any) => s + r.fpcp_was, 0);
@@ -673,7 +708,7 @@ export function getSeoReport(query: any) {
     };
 }
 
-export function getHighImpactItems() {
+export function getHighImpactItems(selection?: SelectionState) {
     if (ALL_DATES.length === 0) return [];
 
     const sortedDates = ALL_DATES.slice().sort(); // chronological
@@ -714,6 +749,15 @@ export function getHighImpactItems() {
             // Exclude items with no change in rank
             const change = (kw.positions[newestDate] as number) - (kw.positions[prev90Date] as number);
             if (change === 0) return false;
+
+            // Apply global selection
+            if (selection && selection.keywords.length > 0) {
+                if (!selection.keywords.includes(kw.keyword)) return false;
+            }
+            if (selection && selection.tags.length > 0) {
+                if (!kw.tags.some(t => selection.tags.includes(t))) return false;
+            }
+
             return true;
         })
         .map(kw => {
@@ -790,6 +834,15 @@ export function getHighImpactItems() {
 export function getTagSummary(query: any) {
     const dateFrom = query.date_from || ALL_DATES[ALL_DATES.length - 1];
     const dateTo = query.date_to || ALL_DATES[0];
+    const selection = query.selection as SelectionState | undefined;
+
+    let targetKeywords = KEYWORDS;
+    if (selection && selection.keywords.length > 0) {
+        targetKeywords = targetKeywords.filter(kw => selection.keywords.includes(kw.keyword));
+    }
+    if (selection && selection.tags.length > 0) {
+        targetKeywords = targetKeywords.filter(kw => kw.tags.some(t => selection.tags.includes(t)));
+    }
 
     const tagGroups: Record<string, {
         keywords: number;
@@ -801,7 +854,7 @@ export function getTagSummary(query: any) {
         totalNetChange: number;
     }> = {};
 
-    KEYWORDS.forEach(kw => {
+    targetKeywords.forEach(kw => {
         const metrics = computeMetrics(kw, dateFrom, dateTo);
         kw.tags.forEach(tag => {
             if (!tagGroups[tag]) {

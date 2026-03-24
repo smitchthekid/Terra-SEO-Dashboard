@@ -23,11 +23,18 @@ import {
 
 const queryClient = new QueryClient();
 
+export type SelectionState = {
+  keywords: string[];
+  tags: string[];
+};
+
 export type AppContextType = {
   dateFrom: string;
   dateTo: string;
   setDateFrom: (d: string) => void;
   setDateTo: (d: string) => void;
+  selection: SelectionState;
+  setSelection: React.Dispatch<React.SetStateAction<SelectionState>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -79,6 +86,7 @@ const Layout = () => {
     }
     return new Date().toISOString().split('T')[0];
   });
+  const [selection, setSelection] = useState<SelectionState>({ keywords: [], tags: [] });
   const [resetKey, setResetKey] = useState(0);
 
   const handleResetFilters = () => {
@@ -87,6 +95,7 @@ const Layout = () => {
       setDateFrom(sorted[sorted.length - 2]);
       setDateTo(sorted[sorted.length - 1]);
     }
+    setSelection({ keywords: [], tags: [] });
     setResetKey(prev => prev + 1);
   };
 
@@ -201,7 +210,7 @@ const Layout = () => {
         </header>
         <main className="flex-1 overflow-y-auto p-8">
           <div className="max-w-7xl mx-auto">
-            <Outlet key={resetKey} context={{ dateFrom, dateTo, setDateFrom, setDateTo } satisfies AppContextType} />
+            <Outlet key={resetKey} context={{ dateFrom, dateTo, setDateFrom, setDateTo, selection, setSelection } satisfies AppContextType} />
           </div>
         </main>
       </div>
@@ -498,13 +507,13 @@ const ProtectedLayout = () => {
 // ---------------------------------------------------------------------------
 
 const Dashboard = () => {
-  const { dateFrom, dateTo } = useOutletContext<AppContextType>();
+  const { dateFrom, dateTo, selection, setSelection } = useOutletContext<AppContextType>();
 
   const { data: info } = useQuery({
-    queryKey: ['data-info', dateFrom, dateTo],
+    queryKey: ['data-info', dateFrom, dateTo, selection],
     queryFn: async () => {
       const baseInfo = getDataInfo();
-      const summary = getTagSummary({ date_from: dateFrom, date_to: dateTo });
+      const summary = getTagSummary({ date_from: dateFrom, date_to: dateTo, selection });
       return {
         ...baseInfo,
         tagSummary: summary.data,
@@ -513,9 +522,9 @@ const Dashboard = () => {
   });
 
   const { data: historyData } = useQuery({
-    queryKey: ['positions-history-dashboard', dateFrom, dateTo],
+    queryKey: ['positions-history-dashboard', dateFrom, dateTo, selection],
     queryFn: async () => {
-      return getPositionsHistory({ date_from: dateFrom, date_to: dateTo, limit: 500 });
+      return getPositionsHistory({ date_from: dateFrom, date_to: dateTo, limit: 500, selection });
     },
   });
 
@@ -594,9 +603,8 @@ const TrendsComponent = ({
   defaultSortDir?: 'asc' | 'desc';
   title?: string
 }) => {
-  const { dateFrom, dateTo } = useOutletContext<AppContextType>();
+  const { dateFrom, dateTo, selection, setSelection } = useOutletContext<AppContextType>();
   const [keywordSearch, setKeywordSearch] = useState('');
-  const [selectedTag, setSelectedTag] = useState('');
   const [page, setPage] = useState(1);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: defaultSortKey, dir: defaultSortDir });
 
@@ -608,18 +616,22 @@ const TrendsComponent = ({
   });
 
   const { data: historyData, isLoading } = useQuery({
-    queryKey: ['positions-history', dateFrom, dateTo, selectedTag, keywordSearch, page, sortConfig, filterType],
+    queryKey: ['positions-history', dateFrom, dateTo, keywordSearch, page, sortConfig, filterType, selection],
     queryFn: async () => {
+      // If global tags are selected, use the first one if the component expects a single tag,
+      // but my getPositionsHistory update handles multiple keywords.
+      // I should update getPositionsHistory call to pass the whole selection.
       return getPositionsHistory({
         date_from: dateFrom,
         date_to: dateTo,
-        tag: selectedTag,
+        tag: selection.tags[0] || '', // Keep single tag for legacy if needed, but getPositionsHistory now filters by selection.tags too
         keyword_search: keywordSearch,
         page,
         limit: 10,
         sort: sortConfig.key,
         order: sortConfig.dir,
         filter_type: filterType,
+        selection,
       });
     },
   });
@@ -669,9 +681,15 @@ const TrendsComponent = ({
     setPage(1);
   };
 
-  const handleRowClickTrends = (keyword: string) => {
-    setKeywordSearch(keyword === keywordSearch ? '' : keyword);
-    setPage(1);
+  const handleRowClickTrends = (kw: string) => {
+    setSelection(prev => {
+      const exists = prev.keywords.includes(kw);
+      if (exists) {
+        return { ...prev, keywords: prev.keywords.filter(k => k !== kw) };
+      } else {
+        return { ...prev, keywords: [...prev.keywords, kw] };
+      }
+    });
   };
 
   return (
@@ -717,8 +735,12 @@ const TrendsComponent = ({
                     }}
                     onClick={(_: any, index: number) => {
                       const name = tagPieData[index]?.name;
-                      if (name === 'Other') return;
-                      setSelectedTag(prev => prev === name ? '' : name);
+                      if (!name || name === 'Other') return;
+                      setSelection(prev => {
+                        const exists = prev.tags.includes(name);
+                        if (exists) return { ...prev, tags: prev.tags.filter(t => t !== name) };
+                        return { ...prev, tags: [...prev.tags, name] };
+                      });
                       setPage(1);
                     }}
                     style={{ cursor: 'pointer', fontSize: '11px' }}
@@ -727,7 +749,7 @@ const TrendsComponent = ({
                       <Cell
                         key={`cell-${i}`}
                         fill={customPieColors[i % customPieColors.length]}
-                        opacity={selectedTag && selectedTag !== entry.name ? 0.3 : 1}
+                        opacity={selection.tags.length > 0 && !selection.tags.includes(entry.name) ? 0.3 : 1}
                       />
                     ))}
                   </Pie>
@@ -738,11 +760,13 @@ const TrendsComponent = ({
               <div className="h-full flex items-center justify-center text-gray-400 text-sm">No data</div>
             )}
           </div>
-          {selectedTag && (
-            <div className="mt-4 flex items-center gap-2 justify-center">
+          {selection.tags.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2 justify-center max-w-[400px]">
               <span className="text-xs text-gray-500">Filtered:</span>
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">{selectedTag}</span>
-              <button onClick={() => { setSelectedTag(''); setPage(1); }} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear</button>
+              {selection.tags.map(tag => (
+                <span key={tag} className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">{tag}</span>
+              ))}
+              <button onClick={() => { setSelection(prev => ({ ...prev, tags: [] })); setPage(1); }} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear All</button>
             </div>
           )}
         </div>
@@ -793,6 +817,22 @@ const TrendsComponent = ({
           <table className="min-w-full divide-y divide-gray-200 text-left">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-4 py-4 w-10">
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                    checked={!!(historyData?.data && historyData.data.length > 0 && historyData.data.every((r: any) => selection.keywords.includes(r.keyword)))}
+                    onChange={(e) => {
+                      if (!historyData?.data) return;
+                      const allVisible = historyData.data.map((r: any) => r.keyword);
+                      if (e.target.checked) {
+                        setSelection(prev => ({ ...prev, keywords: Array.from(new Set([...prev.keywords, ...allVisible])) }));
+                      } else {
+                        setSelection(prev => ({ ...prev, keywords: prev.keywords.filter(k => !allVisible.includes(k)) }));
+                      }
+                    }}
+                  />
+                </th>
                 <SortableHeader label="Keyword" sortKey="keyword" current={sortConfig} onSort={toggleSortTrends} />
                 <SortableHeader label="Volume" sortKey="volume" current={sortConfig} onSort={toggleSortTrends} align="right" />
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Tags</th>
@@ -805,18 +845,26 @@ const TrendsComponent = ({
             <tbody className="bg-white divide-y divide-gray-200">
               {isLoading ? (
                 <tr><td colSpan={7} className="px-6 py-8 text-center text-sm font-medium text-gray-500 animate-pulse">Loading keywords...</td></tr>
-              ) : !historyData?.data?.length ? (
-                <tr><td colSpan={7} className="px-6 py-8 text-center text-sm font-medium text-gray-500">No keywords match your filters</td></tr>
-              ) : historyData.data.map((row: any, i: number) => {
+              ) : !historyData?.data || historyData.data.length === 0 ? (
+                <tr><td colSpan={8} className="px-6 py-8 text-center text-sm font-medium text-gray-500">No keywords match your filters</td></tr>
+              ) : (historyData.data as any[]).map((row: any, i: number) => {
                 const change = row.metrics?.netChange || 0;
                 const changeStr = change > 0 ? `+${change}` : `${change}`;
-                const isSelected = row.keyword === keywordSearch;
+                const isSelected = selection.keywords.includes(row.keyword);
                 return (
                   <tr
                     key={i}
                     onClick={() => handleRowClickTrends(row.keyword)}
-                    className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50'}`}
+                    className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}
                   >
+                    <td className="px-4 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        checked={isSelected}
+                        onChange={() => handleRowClickTrends(row.keyword)}
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">{row.keyword}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 font-medium text-right">{row.volume.toLocaleString()}</td>
                     <td className="px-6 py-4 text-sm">
