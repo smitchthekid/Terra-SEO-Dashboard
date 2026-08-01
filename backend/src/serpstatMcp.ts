@@ -49,10 +49,12 @@ export class SerpstatMcpClient {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json, text/event-stream',
+                'Authorization': `Bearer ${token}`
             },
             timeout: 120_000, // 2 minutes -- rank tracker queries can be slow
         });
     }
+
 
     private nextId(): number {
         return ++this.requestId;
@@ -83,7 +85,20 @@ export class SerpstatMcpClient {
             this.sessionId = sid;
         }
 
-        const data: JsonRpcResponse = response.data;
+        let rawData = response.data;
+        if (typeof rawData === 'string' && rawData.includes('data: ')) {
+            const lines = rawData.split('\n');
+            const dataLine = lines.find(l => l.startsWith('data: '));
+            if (dataLine) {
+                try {
+                    rawData = JSON.parse(dataLine.replace(/^data:\s*/, ''));
+                } catch {
+                    // Fallback to original raw string if JSON parsing fails
+                }
+            }
+        }
+
+        const data: JsonRpcResponse = typeof rawData === 'object' ? rawData : { jsonrpc: '2.0', id: body.id, result: rawData };
 
         if (data.error) {
             throw new Error(`MCP error ${data.error.code}: ${data.error.message}`);

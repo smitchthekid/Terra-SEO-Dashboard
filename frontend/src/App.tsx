@@ -1,17 +1,23 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Outlet, useLocation, useOutletContext, Navigate } from 'react-router-dom';
-import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, ArrowUpDown, ChevronDown, ChevronUp, AlertTriangle, Download } from 'lucide-react';
+import { BarChart3, TrendingUp, Users, Activity, ArrowUpRight, ArrowDownRight, Minus, Search, ChevronLeft, ChevronRight, FileText, AlertTriangle, Download, RefreshCw } from 'lucide-react';
 import { downloadCsv } from './csvUtils';
+import { generateFullReportPdf } from './pdfExport';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 
 import { useDropzone } from 'react-dropzone';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, PieChart, Pie } from 'recharts';
-import ReportView from './ReportView';
-import { HighImpactView } from './HighImpactView';
+import { OverviewView } from './views/OverviewView';
+import { OpportunitiesView } from './views/OpportunitiesView';
+import { LossesView } from './views/LossesView';
+import { SegmentsView } from './views/SegmentsView';
+import { KeywordDetailView } from './views/KeywordDetailView';
+import { SortableHeader, type SortConfig } from './components/SortableHeader';
 import {
   clearData,
   parseCSVContent,
   loadFromCache,
+  loadFromBackend,
   loadSerpstatData,
   getDataStatus,
   getDataInfo,
@@ -43,30 +49,10 @@ export type AppContextType = {
 // Shared Components
 // ---------------------------------------------------------------------------
 
-export type SortConfig = { key: string; dir: 'asc' | 'desc' };
-
-export function SortableHeader({
-  label, sortKey, current, onSort, align = 'left',
-}: {
-  label: string; sortKey: string; current: SortConfig; onSort: (key: string) => void; align?: 'left' | 'right';
-}) {
-  const isActive = current.key === sortKey;
-  return (
-    <th
-      className={`px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:bg-gray-100 transition-colors ${align === 'right' ? 'text-right' : 'text-left'}`}
-      onClick={() => onSort(sortKey)}
-    >
-      <span className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse justify-start' : ''}`}>
-        {label}
-        {isActive ? (
-          current.dir === 'asc' ? <ChevronUp className="w-3.5 h-3.5 text-indigo-600" /> : <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
-        ) : (
-          <ArrowUpDown className="w-3 h-3 text-gray-300" />
-        )}
-      </span>
-    </th>
-  );
-}
+// SortableHeader now lives in ./components/SortableHeader (shared by the
+// legacy in-file components below and the new views/ tables). Re-exported
+// here for backward compatibility with anything importing it from App.tsx.
+export { SortableHeader, type SortConfig };
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -114,17 +100,48 @@ const Layout = () => {
     }
   };
 
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('');
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const handleExportFullReport = () => {
+    setExportingPdf(true);
+    try {
+      generateFullReportPdf({ dateFrom, dateTo });
+    } catch (e) {
+      console.error('Failed to generate PDF report', e);
+      window.alert('Failed to generate the PDF report. See the browser console for details.');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  const handleLiveSync = async () => {
+    setSyncing(true);
+    setSyncStatus('Fetching live data from Serpstat MCP...');
+    try {
+      const res = await fetch('/api/serpstat/live-sync', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Live sync failed');
+      }
+      loadSerpstatData(data.keywords, data.allDates);
+      queryClient.invalidateQueries();
+      setSyncStatus(`Sync Complete (${data.count} keywords)`);
+      setResetKey(prev => prev + 1);
+      setTimeout(() => setSyncStatus(''), 4000);
+    } catch (e: any) {
+      setSyncStatus(`Error: ${e.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const navigation = [
-    { name: 'SEO Report', href: '/seo-overview', icon: FileText },
-    { name: 'Dashboard', href: '/dashboard', icon: Activity },
-    { name: 'Trends', href: '/trends', icon: TrendingUp },
-    { name: 'Movers', href: '/movers', icon: ArrowUpRight },
-    { name: 'Biggest Declines', href: '/declines', icon: ArrowDownRight },
-    { name: 'Biggest Improvements', href: '/improvements', icon: ArrowUpRight },
-    { name: 'High Impact Items', href: '/high-impact-items', icon: AlertTriangle },
-    { name: 'Rank First Page', href: '/first-page', icon: FileText },
-    { name: 'Rank Top 3', href: '/top-3', icon: FileText },
-    { name: 'Product Categories', href: '/tags', icon: Users },
+    { name: 'Overview', href: '/overview', icon: Activity },
+    { name: 'Opportunities', href: '/opportunities', icon: TrendingUp },
+    { name: 'Losses', href: '/losses', icon: AlertTriangle },
+    { name: 'Product Segments', href: '/segments', icon: Users },
   ];
 
   return (
@@ -207,7 +224,29 @@ const Layout = () => {
             {navigation.find(n => n.href === location.pathname)?.name || 'Dashboard'}
           </h1>
           <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-500 font-medium">Terra Universal SEO Tracker</span>
+            {syncStatus && (
+              <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-100 animate-pulse">
+                {syncStatus}
+              </span>
+            )}
+            <button
+              onClick={handleLiveSync}
+              disabled={syncing}
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing Serpstat MCP...' : 'Sync Live Serpstat Data'}
+            </button>
+            <button
+              onClick={handleExportFullReport}
+              disabled={exportingPdf}
+              title="Export a consolidated PDF covering Overview, Opportunities, Losses, and Product Segments for the selected date range"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm transition-all"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {exportingPdf ? 'Generating PDF...' : 'Export Full Report (PDF)'}
+            </button>
+            <span className="text-sm text-gray-500 font-medium border-l border-gray-200 pl-4">Terra Universal SEO Tracker</span>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto p-8">
@@ -467,7 +506,9 @@ const ProtectedLayout = () => {
     queryFn: async () => {
       let currentStatus = getDataStatus();
       if (!currentStatus.loaded) {
-        if (loadFromCache()) {
+        if (await loadFromBackend()) {
+          currentStatus = getDataStatus();
+        } else if (loadFromCache()) {
           currentStatus = getDataStatus();
         }
       }
@@ -508,7 +549,7 @@ const ProtectedLayout = () => {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-const Dashboard = () => {
+export const Dashboard = () => {
   const { dateFrom, dateTo, selection } = useOutletContext<AppContextType>();
 
   const { data: info } = useQuery({
@@ -976,7 +1017,7 @@ export const Top3View = () => <TrendsComponent filterType="top_3" defaultSortKey
 // Movers View
 // ---------------------------------------------------------------------------
 
-const MoversView = () => {
+export const MoversView = () => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
   const [direction, setDirection] = useState('all');
   const [keywordSearch, setKeywordSearch] = useState('');
@@ -1212,7 +1253,7 @@ const MoversView = () => {
 
 const TAG_COLORS = ["#044a63", "#ad4385", "#ffa600", "#f75c5c", "#5480B3", "#D8A130", "#7a4387", "#d94875"];
 
-const TagsView = () => {
+export const TagsView = () => {
   const { dateFrom, dateTo } = useOutletContext<AppContextType>();
   const [tagSearch, setTagSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'totalVolume', dir: 'desc' });
@@ -1443,17 +1484,24 @@ export default function App() {
       <Router>
         <Routes>
           <Route path="/" element={<ProtectedLayout />}>
-            <Route index element={<Navigate to="/seo-overview" replace />} />
-            <Route path="seo-overview" element={<ReportView />} />
-            <Route path="dashboard" element={<Dashboard />} />
-            <Route path="trends" element={<TrendsView />} />
-            <Route path="movers" element={<MoversView />} />
-            <Route path="declines" element={<DeclinesView />} />
-            <Route path="improvements" element={<ImprovementsView />} />
-            <Route path="high-impact-items" element={<HighImpactView />} />
-            <Route path="first-page" element={<FirstPageView />} />
-            <Route path="top-3" element={<Top3View />} />
-            <Route path="tags" element={<TagsView />} />
+            <Route index element={<Navigate to="/overview" replace />} />
+            <Route path="overview" element={<OverviewView />} />
+            <Route path="opportunities" element={<OpportunitiesView />} />
+            <Route path="losses" element={<LossesView />} />
+            <Route path="segments" element={<SegmentsView />} />
+            <Route path="keyword/:keywordId" element={<KeywordDetailView />} />
+
+            {/* Legacy Route Compatibility Redirects */}
+            <Route path="seo-overview" element={<Navigate to="/overview" replace />} />
+            <Route path="dashboard" element={<Navigate to="/overview" replace />} />
+            <Route path="trends" element={<Navigate to="/overview" replace />} />
+            <Route path="movers" element={<Navigate to="/opportunities" replace />} />
+            <Route path="declines" element={<Navigate to="/losses" replace />} />
+            <Route path="improvements" element={<Navigate to="/opportunities" replace />} />
+            <Route path="high-impact-items" element={<Navigate to="/opportunities" replace />} />
+            <Route path="first-page" element={<Navigate to="/opportunities" replace />} />
+            <Route path="top-3" element={<Navigate to="/opportunities" replace />} />
+            <Route path="tags" element={<Navigate to="/segments" replace />} />
           </Route>
         </Routes>
       </Router>

@@ -6,6 +6,9 @@ import path from 'path';
 import multer from 'multer';
 import axios from 'axios';
 import { listProjects, fetchPositionsHistory, discoverTools } from './serpstatMcp';
+import { refreshData } from './refresh_data';
+import { applyCategoryTags } from './categoryMap';
+
 
 dotenv.config();
 
@@ -129,11 +132,30 @@ function parseCSVContent(raw: string): void {
         newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
     }
 
-    KEYWORDS = newKeywords;
+    KEYWORDS = applyCategoryTags(newKeywords);
     console.log(`[CSV] Loaded ${KEYWORDS.length} keywords`);
 }
 
-// Startup file load removed per requirement
+// Load from data-cache.json on startup if exists
+function loadCacheOnStartup(): void {
+    const cachePath = path.resolve(__dirname, 'data-cache.json');
+    if (fs.existsSync(cachePath)) {
+        try {
+            console.log('[CSV] Loading data from cache file...');
+            const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+            if (cache.keywords && cache.allDates) {
+                KEYWORDS = applyCategoryTags(cache.keywords);
+                ALL_DATES = cache.allDates;
+                console.log(`[CSV] Pre-loaded ${KEYWORDS.length} keywords from cache on startup`);
+            }
+        } catch (e: any) {
+            console.error('[CSV] Failed loading cache on startup:', e.message);
+        }
+    } else {
+        console.log('[CSV] No startup cache found, waiting for fetch/upload.');
+    }
+}
+loadCacheOnStartup();
 
 /** Simple CSV line parser that handles quoted fields with commas */
 function parseCSVLine(line: string): string[] {
@@ -164,6 +186,13 @@ function parseCSVLine(line: string): string[] {
 
 app.get('/api/data-status', (_req, res) => {
     res.json({ loaded: KEYWORDS.length > 0, keywordCount: KEYWORDS.length });
+});
+
+// Serve the currently loaded in-memory dataset (CSV upload, Serpstat sync, or
+// startup cache) so the frontend can rehydrate its own store on page load/reload
+// instead of losing synced data and falling back to a stale CSV.
+app.get('/api/data', (_req, res) => {
+    res.json({ keywords: KEYWORDS, allDates: ALL_DATES });
 });
 
 app.post('/api/clear-data', (_req, res) => {
@@ -296,6 +325,7 @@ function transformSerpstatData(rawData: any): void {
         const positions: Record<string, number | null> = {};
         const posHistory = rec.positions || rec.position_history || rec.history || rec.serp_history || {};
 
+        let firstUrl = '';
         if (typeof posHistory === 'object' && !Array.isArray(posHistory)) {
             // Object format: { "2026-02-15": 5, "2026-02-20": 3, ... }
             for (const [date, pos] of Object.entries(posHistory)) {
@@ -308,18 +338,24 @@ function transformSerpstatData(rawData: any): void {
             }
         } else if (Array.isArray(posHistory)) {
             // Array format: [{ date: "2026-02-15", position: 5 }, ...]
+            // Serpstat REST API nests the actual rank inside a `positions` array per date entry
             for (const entry of posHistory) {
                 const date = normalizeDate(entry.date || entry.check_date || entry.created_at || '');
-                const pos = entry.position ?? entry.pos ?? entry.rank ?? null;
+                const posEntry = Array.isArray(entry.positions) ? entry.positions[0] : null;
+                const pos = posEntry?.position ?? entry.position ?? entry.pos ?? entry.rank ?? null;
+                const url = posEntry?.url ?? entry.url;
                 if (date) {
                     dateSet.add(date);
-                    positions[date] = pos !== null ? Number(pos) : null;
+                    positions[date] = (pos !== null && pos !== undefined && pos !== 0) ? Number(pos) : null;
+                    if (!firstUrl && url) {
+                        firstUrl = url;
+                    }
                 }
             }
         }
 
         // Extract URLs
-        const urlInSerp = rec.url || rec.found_url || rec.serp_url || '';
+        const urlInSerp = rec.url || firstUrl || rec.found_url || rec.serp_url || '';
         const expectedUrl = rec.expected_url || rec.target_url || '';
 
         newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
@@ -331,7 +367,7 @@ function transformSerpstatData(rawData: any): void {
 
     // Sort dates newest first (matching CSV convention)
     ALL_DATES = Array.from(dateSet).sort((a, b) => b.localeCompare(a));
-    KEYWORDS = newKeywords;
+    KEYWORDS = applyCategoryTags(newKeywords);
 
     console.log(`[Serpstat] Loaded ${KEYWORDS.length} keywords across ${ALL_DATES.length} dates`);
 }
@@ -381,6 +417,46 @@ app.post('/api/fetch-serpstat', async (req, res) => {
         res.status(500).json({ error: e.message });
     }
 });
+
+// Trigger live sync directly from Serpstat API/MCP and update cache/memory
+app.post('/api/serpstat/live-sync', async (_req, res) => {
+    try {
+        const token = getSerpstatToken();
+        if (!token || token === 'your_serpstat_api_token_here') {
+            return res.status(400).json({ error: 'SERPSTAT_API_TOKEN is not configured in .env' });
+        }
+
+        console.log('[Serpstat Live Sync] Initiating live sync from Serpstat API/MCP...');
+        await refreshData();
+        loadCacheOnStartup();
+
+        res.json({
+            success: true,
+            message: 'Live sync with Serpstat complete',
+            count: KEYWORDS.length,
+            dates: ALL_DATES.length,
+            keywords: KEYWORDS,
+            allDates: ALL_DATES,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (e: any) {
+        console.error('[Serpstat Live Sync] Failed:', e.message);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Get current data source & sync status info
+app.get('/api/serpstat/info', (_req, res) => {
+    const token = getSerpstatToken();
+    res.json({
+        configured: !!token && token !== 'your_serpstat_api_token_here',
+        keywordCount: KEYWORDS.length,
+        dateCount: ALL_DATES.length,
+        latestDate: ALL_DATES[0] || null,
+        oldestDate: ALL_DATES[ALL_DATES.length - 1] || null
+    });
+});
+
 
 // ---------------------------------------------------------------------------
 // Utility: compute metrics for a keyword within a date range
@@ -1246,3 +1322,29 @@ app.listen(PORT, () => {
     console.log(`Serpstat Tracker Backend running on port ${PORT}`);
     console.log(`Loaded ${KEYWORDS.length} keywords across ${ALL_DATES.length} dates`);
 });
+
+// Scheduler: Run on the 1st and 15th of the month at 00:00 (checked every hour)
+let lastRunDay = 0;
+setInterval(() => {
+    const now = new Date();
+    const date = now.getDate();
+    const hour = now.getHours();
+
+    if ((date === 1 || date === 15) && hour === 0 && lastRunDay !== date) {
+        lastRunDay = date;
+        console.log(`[Scheduler] Starting scheduled data refresh on day ${date}...`);
+        refreshData()
+            .then(() => {
+                // Reload updated cache in-memory
+                const cachePath = path.resolve(__dirname, 'data-cache.json');
+                if (fs.existsSync(cachePath)) {
+                    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+                    KEYWORDS = applyCategoryTags(cache.keywords);
+                    ALL_DATES = cache.allDates;
+                    console.log(`[Scheduler] Reloaded memory cache. Keywords: ${KEYWORDS.length}`);
+                }
+            })
+            .catch((err: any) => console.error('[Scheduler] Refresh failed:', err.message));
+    }
+}, 60 * 60 * 1000); // check hourly
+

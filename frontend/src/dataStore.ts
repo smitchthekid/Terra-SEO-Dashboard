@@ -1,5 +1,21 @@
 // Data Store porting backend logic to frontend store.
 
+import categoryMapData from './category-map.json';
+
+// Permanent keyword -> category tags lookup, sourced from the curated Terra
+// SEO Report export. Applied on top of any locally-parsed CSV so category
+// tagging stays consistent even if a re-exported CSV omits/changes the Tags
+// column (the mirror of backend/src/categoryMap.ts).
+const CATEGORY_MAP: Record<string, string[]> = categoryMapData as Record<string, string[]>;
+
+function applyCategoryTags(keywords: KeywordRecord[]): KeywordRecord[] {
+    keywords.forEach(kw => {
+        const tags = CATEGORY_MAP[kw.keyword.toLowerCase().trim()];
+        if (tags) kw.tags = tags;
+    });
+    return keywords;
+}
+
 export interface KeywordRecord {
     keyword: string;
     tags: string[];
@@ -28,10 +44,33 @@ export function clearData(): void {
  * The backend has already transformed the data into KeywordRecord shape.
  */
 export function loadSerpstatData(keywords: KeywordRecord[], dates: string[]): void {
-    KEYWORDS = keywords;
+    KEYWORDS = applyCategoryTags(keywords);
     ALL_DATES = dates;
     // Clear CSV cache since we are loading from Serpstat
     localStorage.removeItem('terra_seo_csv_cache');
+}
+
+/**
+ * Rehydrate the in-memory store from whatever the backend already has loaded
+ * (CSV upload, Serpstat sync, or its own startup cache). The frontend store is
+ * JS-memory-only and resets on every page load, so this must run before falling
+ * back to the local CSV cache -- otherwise a completed Serpstat sync gets
+ * silently discarded on refresh.
+ */
+export async function loadFromBackend(): Promise<boolean> {
+    try {
+        const res = await fetch('/api/data');
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (Array.isArray(data.keywords) && data.keywords.length > 0) {
+            KEYWORDS = applyCategoryTags(data.keywords);
+            ALL_DATES = data.allDates || [];
+            return true;
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 export function loadFromCache(): boolean {
@@ -94,7 +133,7 @@ export function parseCSVContent(raw: string, setCache = true): void {
         newKeywords.push({ keyword, tags, volume, positions, urlInSerp, expectedUrl });
     }
 
-    KEYWORDS = newKeywords;
+    KEYWORDS = applyCategoryTags(newKeywords);
 
     if (setCache) {
         try {
