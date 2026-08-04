@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { AlertTriangle, ArrowDownRight, ShieldAlert, Download } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import type { AppContextType } from '../App';
 import { KEYWORDS, getTags } from '../dataStore';
 import { scoreKeyword, applyGlobalFilters } from '../metricsEngine';
@@ -11,6 +11,7 @@ import type { FilterState } from '../components/GlobalFilterBar';
 import { SortableHeader, sortByConfig } from '../components/SortableHeader';
 import type { SortConfig } from '../components/SortableHeader';
 import { downloadCsv } from '../csvUtils';
+import { buildKeywordTrendSeries, TREND_LINE_COLORS } from '../components/positionSeries';
 
 const DEFAULT_FILTER_STATE: FilterState = {
     keywordSearch: '',
@@ -35,7 +36,16 @@ export const LossesView: React.FC = () => {
         return applyGlobalFilters(allScoredKeywords, filterState);
     }, [allScoredKeywords, filterState]);
 
-    const handleReset = () => setFilterState(DEFAULT_FILTER_STATE);
+    const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+    const toggleKeywordSelection = (keyword: string) => {
+        setSelectedKeywords(prev => {
+            const next = new Set(prev);
+            if (next.has(keyword)) next.delete(keyword); else next.add(keyword);
+            return next;
+        });
+    };
+
+    const handleReset = () => { setFilterState(DEFAULT_FILTER_STATE); setSelectedKeywords(new Set()); };
 
     // Declines list -- kept sorted by Risk Score (desc) since the chart below
     // (Highest At-Risk Declines) always shows the top risk-ranked items
@@ -67,13 +77,16 @@ export const LossesView: React.FC = () => {
     const top3Losses = useMemo(() => decliningKeywords.filter(k => k.previousPos !== null && k.previousPos <= 3), [decliningKeywords]);
     const top10Losses = useMemo(() => decliningKeywords.filter(k => k.previousPos !== null && k.previousPos > 3 && k.previousPos <= 10), [decliningKeywords]);
 
-    const barData = useMemo(() => {
-        return decliningKeywords.slice(0, 15).map(k => ({
-            keyword: k.keyword.length > 20 ? k.keyword.slice(0, 20) + '...' : k.keyword,
-            riskScore: k.riskScore,
-            netChange: k.netChange,
-        }));
-    }, [decliningKeywords]);
+    // Rank-history line chart -- restricts to the table selection when
+    // present, otherwise the top 8 highest-risk decliners currently in view
+    // (from allScoredKeywords so a selection survives filter changes).
+    const trendKeywords = useMemo(() => {
+        return selectedKeywords.size > 0
+            ? allScoredKeywords.filter(k => selectedKeywords.has(k.keyword)).sort((a, b) => b.riskScore - a.riskScore)
+            : decliningKeywords.slice(0, 8);
+    }, [decliningKeywords, allScoredKeywords, selectedKeywords]);
+
+    const trendData = useMemo(() => buildKeywordTrendSeries(trendKeywords), [trendKeywords]);
 
     const displayedDecliningKeywords = useMemo(() => sortedDecliningKeywords.slice(0, 25), [sortedDecliningKeywords]);
 
@@ -140,21 +153,38 @@ export const LossesView: React.FC = () => {
                 </div>
             </div>
 
-            {/* Risk Contribution Chart */}
+            {/* Rank Trend Chart -- restricts to the table selection when present,
+                otherwise the top 8 highest-risk decliners currently in view. */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-base font-semibold text-gray-900 mb-1">Highest At-Risk Declines (By Risk Score)</h3>
-                <p className="text-xs text-gray-400 mb-4">Combines position drop severity with keyword search volume.</p>
-                <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={barData} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
-                            <XAxis type="number" tick={{ fontSize: 11 }} />
-                            <YAxis type="category" dataKey="keyword" tick={{ fontSize: 11 }} width={110} />
-                            <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                            <Bar dataKey="riskScore" fill="#ef4444" radius={[0, 4, 4, 0]} name="Risk Score" />
-                        </BarChart>
-                    </ResponsiveContainer>
+                <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-base font-semibold text-gray-900">
+                        {selectedKeywords.size > 0 ? `Rank Trend -- ${selectedKeywords.size} Selected Keyword${selectedKeywords.size > 1 ? 's' : ''}` : 'Rank Trend -- Top 8 At-Risk Decliners'}
+                    </h3>
+                    {selectedKeywords.size > 0 && (
+                        <button onClick={() => setSelectedKeywords(new Set())} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear selection</button>
+                    )}
                 </div>
+                <p className="text-xs text-gray-400 mb-4">Historical SERP position for each keyword. Lower is better. Select rows below to focus the chart.</p>
+                {trendData.length === 0 ? (
+                    <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
+                        <span className="text-gray-400 font-medium">No position history available</span>
+                    </div>
+                ) : (
+                    <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={trendData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                                <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <YAxis reversed domain={['dataMin - 1', 'dataMax + 1']} tick={{ fontSize: 11 }} label={{ value: 'Position', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9ca3af' } }} />
+                                <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
+                                <Legend iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
+                                {trendKeywords.map((k, i) => (
+                                    <Line key={k.keyword} type="monotone" dataKey={k.keyword} stroke={TREND_LINE_COLORS[i % TREND_LINE_COLORS.length]} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                                ))}
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
             </div>
 
             {/* Defensive Action Table */}
@@ -176,6 +206,20 @@ export const LossesView: React.FC = () => {
                     <table className="min-w-full divide-y divide-gray-200 text-left">
                         <thead className="bg-gray-50">
                             <tr>
+                                <th className="px-4 py-4 w-10">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        checked={displayedDecliningKeywords.length > 0 && displayedDecliningKeywords.every(r => selectedKeywords.has(r.keyword))}
+                                        onChange={(e) => {
+                                            setSelectedKeywords(prev => {
+                                                const next = new Set(prev);
+                                                displayedDecliningKeywords.forEach(r => e.target.checked ? next.add(r.keyword) : next.delete(r.keyword));
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                </th>
                                 <SortableHeader label="Keyword" sortKey="keyword" current={sortConfig} onSort={toggleSort} />
                                 <SortableHeader label="Volume" sortKey="volume" current={sortConfig} onSort={toggleSort} align="right" />
                                 <SortableHeader label="Previous Pos" sortKey="previousPos" current={sortConfig} onSort={toggleSort} align="right" />
@@ -186,25 +230,36 @@ export const LossesView: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 bg-white text-sm">
-                            {displayedDecliningKeywords.map((row) => (
-                                <tr key={row.keyword} className="hover:bg-gray-50">
-                                    <td className="px-6 py-3.5 font-medium text-gray-900">
-                                        {row.keyword}
-                                    </td>
-                                    <td className="px-6 py-3.5 text-right font-medium text-gray-700">{row.volume.toLocaleString()}</td>
-                                    <td className="px-6 py-3.5 text-right font-medium text-gray-600">{row.previousPos ?? '-'}</td>
-                                    <td className="px-6 py-3.5 text-right font-semibold text-gray-900">{row.currentPos ?? '-'}</td>
-                                    <td className="px-6 py-3.5 text-right font-bold text-red-600">{row.netChange}</td>
-                                    <td className="px-6 py-3.5 text-right font-bold text-red-600">{row.riskScore.toLocaleString()}</td>
-                                    <td className="px-6 py-3.5">
-                                        <div className="flex gap-1">
-                                            {row.tags.slice(0, 2).map(t => (
-                                                <span key={t} className="px-2 py-0.5 rounded text-xs bg-red-50 text-red-700 font-medium">{t}</span>
-                                            ))}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                            {displayedDecliningKeywords.map((row) => {
+                                const isSelected = selectedKeywords.has(row.keyword);
+                                return (
+                                    <tr key={row.keyword} onClick={() => toggleKeywordSelection(row.keyword)} className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}>
+                                        <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                                            <input
+                                                type="checkbox"
+                                                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                checked={isSelected}
+                                                onChange={() => toggleKeywordSelection(row.keyword)}
+                                            />
+                                        </td>
+                                        <td className="px-6 py-3.5 font-medium text-gray-900">
+                                            {row.keyword}
+                                        </td>
+                                        <td className="px-6 py-3.5 text-right font-medium text-gray-700">{row.volume.toLocaleString()}</td>
+                                        <td className="px-6 py-3.5 text-right font-medium text-gray-600">{row.previousPos ?? '-'}</td>
+                                        <td className="px-6 py-3.5 text-right font-semibold text-gray-900">{row.currentPos ?? '-'}</td>
+                                        <td className="px-6 py-3.5 text-right font-bold text-red-600">{row.netChange}</td>
+                                        <td className="px-6 py-3.5 text-right font-bold text-red-600">{row.riskScore.toLocaleString()}</td>
+                                        <td className="px-6 py-3.5">
+                                            <div className="flex gap-1">
+                                                {row.tags.slice(0, 2).map(t => (
+                                                    <span key={t} className="px-2 py-0.5 rounded text-xs bg-red-50 text-red-700 font-medium">{t}</span>
+                                                ))}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

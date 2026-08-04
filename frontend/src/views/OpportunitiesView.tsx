@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Target, Zap, Award, TrendingUp, Download } from 'lucide-react';
-import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
+import { ResponsiveContainer, ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
 import type { AppContextType } from '../App';
 import { KEYWORDS, getTags } from '../dataStore';
 import { scoreKeyword, applyGlobalFilters } from '../metricsEngine';
@@ -37,7 +37,16 @@ export const OpportunitiesView: React.FC = () => {
         return applyGlobalFilters(allScoredKeywords, filterState);
     }, [allScoredKeywords, filterState]);
 
-    const handleReset = () => setFilterState(DEFAULT_FILTER_STATE);
+    const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
+    const toggleKeywordSelection = (keyword: string) => {
+        setSelectedKeywords(prev => {
+            const next = new Set(prev);
+            if (next.has(keyword)) next.delete(keyword); else next.add(keyword);
+            return next;
+        });
+    };
+
+    const handleReset = () => { setFilterState(DEFAULT_FILTER_STATE); setSelectedKeywords(new Set()); };
 
     // Filter by subtab (applied on top of the global filter bar dataset)
     const filteredKeywords = useMemo(() => {
@@ -81,15 +90,20 @@ export const OpportunitiesView: React.FC = () => {
         });
     }, [filteredKeywords, sortConfig]);
 
-    // Scatter plot data: Position vs Volume (Opportunity Space)
+    // Scatter plot data: Position vs Volume (Opportunity Space).
+    // Bubble size (z) encodes search volume; color encodes net rank movement
+    // direction rather than plot order, so the chart is actually meaningful.
     const scatterData = useMemo(() => {
         return filteredKeywords.slice(0, 40).map(k => ({
             keyword: k.keyword,
             x: k.currentPos || 20,
             y: k.volume,
+            z: k.volume,
+            netChange: k.netChange,
             opportunityScore: k.opportunityScore,
+            selected: selectedKeywords.has(k.keyword),
         }));
-    }, [filteredKeywords]);
+    }, [filteredKeywords, selectedKeywords]);
 
     const displayedKeywords = useMemo(() => sortedKeywords.slice(0, 25), [sortedKeywords]);
 
@@ -150,18 +164,30 @@ export const OpportunitiesView: React.FC = () => {
 
             {/* Opportunity Scatterplot Chart */}
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-base font-semibold text-gray-900 mb-1">Opportunity Space: Rank vs. Search Volume</h3>
-                <p className="text-xs text-gray-400 mb-4">Target terms in top-left (high volume, positions 4-10) for maximum traffic ROI.</p>
+                <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-base font-semibold text-gray-900">Opportunity Space: Rank vs. Search Volume</h3>
+                    {selectedKeywords.size > 0 && (
+                        <button onClick={() => setSelectedKeywords(new Set())} className="text-xs text-gray-400 hover:text-gray-600 underline">Clear selection ({selectedKeywords.size})</button>
+                    )}
+                </div>
+                <p className="text-xs text-gray-400 mb-4">Target terms in top-left (high volume, positions 4-10) for maximum traffic ROI. Bubble size = search volume; color = net rank movement{selectedKeywords.size > 0 ? '; selected rows are outlined.' : '.'}</p>
                 <div className="h-64 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                         <ScatterChart margin={{ top: 20, right: 20, bottom: 10, left: 10 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                             <XAxis type="number" dataKey="x" name="Current Pos" unit=" pos" domain={[1, 20]} reversed tick={{ fontSize: 11 }} label={{ value: 'SERP Position (Lower is better)', position: 'insideBottom', offset: -5, style: { fontSize: 11, fill: '#9ca3af' } }} />
                             <YAxis type="number" dataKey="y" name="Search Volume" unit=" vol" tick={{ fontSize: 11 }} />
+                            <ZAxis type="number" dataKey="z" range={[60, 500]} name="Volume" />
                             <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(val: any, name: any) => [val, name]} />
-                            <Scatter data={scatterData} fill="#10b981">
-                                {scatterData.map((_, index) => (
-                                    <Cell key={`cell-${index}`} fill={index < 5 ? '#059669' : '#10b981'} />
+                            <Scatter data={scatterData}>
+                                {scatterData.map((entry, index) => (
+                                    <Cell
+                                        key={`cell-${index}`}
+                                        fill={entry.netChange > 0 ? '#059669' : entry.netChange < 0 ? '#ef4444' : '#9ca3af'}
+                                        fillOpacity={entry.selected || selectedKeywords.size === 0 ? 0.85 : 0.25}
+                                        stroke={entry.selected ? '#1e293b' : 'none'}
+                                        strokeWidth={entry.selected ? 2 : 0}
+                                    />
                                 ))}
                             </Scatter>
                         </ScatterChart>
@@ -192,6 +218,20 @@ export const OpportunitiesView: React.FC = () => {
                     <table className="min-w-full divide-y divide-gray-200 text-left">
                         <thead className="bg-gray-50">
                             <tr>
+                                <th className="px-4 py-4 w-10">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        checked={displayedKeywords.length > 0 && displayedKeywords.every(r => selectedKeywords.has(r.keyword))}
+                                        onChange={(e) => {
+                                            setSelectedKeywords(prev => {
+                                                const next = new Set(prev);
+                                                displayedKeywords.forEach(r => e.target.checked ? next.add(r.keyword) : next.delete(r.keyword));
+                                                return next;
+                                            });
+                                        }}
+                                    />
+                                </th>
                                 <SortableHeader label="Keyword" sortKey="keyword" current={sortConfig} onSort={toggleSort} />
                                 <SortableHeader label="Volume" sortKey="volume" current={sortConfig} onSort={toggleSort} align="right" />
                                 <SortableHeader label="Current Pos" sortKey="currentPos" current={sortConfig} onSort={toggleSort} align="right" />
@@ -201,15 +241,27 @@ export const OpportunitiesView: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 bg-white text-sm">
-                            {displayedKeywords.map((row) => (
-                                <tr key={row.keyword} className="hover:bg-gray-50">
+                            {displayedKeywords.map((row) => {
+                                const isSelected = selectedKeywords.has(row.keyword);
+                                return (
+                                <tr key={row.keyword} onClick={() => toggleKeywordSelection(row.keyword)} className={`cursor-pointer transition-colors ${isSelected ? 'bg-indigo-50 border-l-4 border-indigo-500 hover:bg-indigo-100' : 'hover:bg-gray-50 border-l-4 border-transparent'}`}>
+                                    <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            checked={isSelected}
+                                            onChange={() => toggleKeywordSelection(row.keyword)}
+                                        />
+                                    </td>
                                     <td className="px-6 py-3.5 font-medium text-gray-900">
                                         {row.keyword}
                                     </td>
                                     <td className="px-6 py-3.5 text-right font-medium text-gray-700">{row.volume.toLocaleString()}</td>
                                     <td className="px-6 py-3.5 text-right font-semibold text-gray-900">{row.currentPos ?? '-'}</td>
-                                    <td className="px-6 py-3.5 text-right font-bold text-emerald-600">
-                                        {row.netChange > 0 ? `+${row.netChange}` : row.netChange}
+                                    <td className="px-6 py-3.5 text-right font-bold">
+                                        <span className={row.netChange > 0 ? 'text-emerald-600' : row.netChange < 0 ? 'text-red-600' : 'text-gray-400'}>
+                                            {row.netChange > 0 ? `+${row.netChange}` : row.netChange}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-3.5 text-right font-bold text-emerald-600">{row.opportunityScore.toLocaleString()}</td>
                                     <td className="px-6 py-3.5">
@@ -220,7 +272,8 @@ export const OpportunitiesView: React.FC = () => {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 </div>

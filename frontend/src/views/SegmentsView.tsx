@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import { Layers, Download } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
+import { useOutletContext, Link, useNavigate } from 'react-router-dom';
+import { Layers, Download, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import type { AppContextType } from '../App';
-import { getTagSummary, getTags } from '../dataStore';
+import { getTagSummary, getTags, getTagTimeline } from '../dataStore';
 import { GlobalFilterBar } from '../components/GlobalFilterBar';
 import type { FilterState } from '../components/GlobalFilterBar';
 import { SortableHeader, sortByConfig } from '../components/SortableHeader';
 import type { SortConfig } from '../components/SortableHeader';
 import { downloadCsv } from '../csvUtils';
+import { CATEGORY_COLORS } from '../components/chartColors';
 
 const DEFAULT_FILTER_STATE: FilterState = {
     keywordSearch: '',
@@ -41,6 +42,7 @@ function volumeTier(totalVolume: number): 'high' | 'medium' | 'low' {
 
 export const SegmentsView: React.FC = () => {
     const { dateFrom, dateTo, setDateFrom, setDateTo } = useOutletContext<AppContextType>();
+    const navigate = useNavigate();
     const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
 
     const tags = useMemo(() => getTags().map(t => t.tag), []);
@@ -126,13 +128,35 @@ export const SegmentsView: React.FC = () => {
         downloadCsv(`segments-categories-${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
     };
 
-    const barChartData = useMemo(() => {
-        return filteredTags.slice(0, 10).map(t => ({
-            tag: t.tag.length > 15 ? t.tag.slice(0, 15) + '...' : t.tag,
-            totalVolume: t.totalVolume,
-            keywords: t.keywords,
-            netChange: t.totalNetChange,
-        }));
+    // Rank-trend line chart -- one line per category currently in view
+    // (respecting the active filters), capped to the top 8 by volume for
+    // readability. maxTags is passed as the full tag count so getTagTimeline
+    // always includes every category's series regardless of its volume rank,
+    // and we then just pick which lines to draw from the filtered set.
+    const trendTags = useMemo(() => filteredTags.slice(0, 8).map(t => t.tag), [filteredTags]);
+    const categoryTimeline = useMemo(() => {
+        return getTagTimeline({ date_from: dateFrom, date_to: dateTo, maxTags: Math.max(tags.length, 1) });
+    }, [dateFrom, dateTo, tags.length]);
+    const categoryTrendData = useMemo(() => {
+        return (categoryTimeline.timeline || []).map((row: any) => {
+            const out: Record<string, string | number> = { date: row.date };
+            trendTags.forEach(tag => { if (row[tag] !== undefined) out[tag] = row[tag]; });
+            return out;
+        });
+    }, [categoryTimeline, trendTags]);
+
+    // Category volume pie -- clicking a slice drills into that category's
+    // dedicated report page (keyword-level breakdown + trend).
+    const pieData = useMemo(() => {
+        return filteredTags.map(t => ({ name: t.tag, value: t.totalVolume }));
+    }, [filteredTags]);
+
+    const goToCategory = (tag: string) => navigate(`/segments/${encodeURIComponent(tag)}`);
+
+    // Scorecards ranked so the biggest movers (up or down) surface first --
+    // a top-level "what's improving vs declining" signal at a glance.
+    const scorecardTags = useMemo(() => {
+        return [...filteredTags].sort((a, b) => Math.abs(b.totalNetChange) - Math.abs(a.totalNetChange));
     }, [filteredTags]);
 
     return (
@@ -159,23 +183,103 @@ export const SegmentsView: React.FC = () => {
                 </div>
             </div>
 
-            {/* Category Search Volume & Keyword Breakdown Chart */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-base font-semibold text-gray-900 mb-1">Top Product Categories by Volume</h3>
-                <p className="text-xs text-gray-400 mb-4">Total search volume footprint across top product lines.</p>
-                <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={barChartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                            <XAxis dataKey="tag" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                            <YAxis yAxisId="left" orientation="left" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                            <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                            <Legend wrapperStyle={{ paddingTop: '10px', fontSize: '11px' }} />
-                            <Bar yAxisId="left" dataKey="totalVolume" fill="#044a63" radius={[4, 4, 0, 0]} name="Total Search Volume" />
-                            <Bar yAxisId="right" dataKey="keywords" fill="#ad4385" radius={[4, 4, 0, 0]} name="Keyword Count" />
-                        </BarChart>
-                    </ResponsiveContainer>
+            {/* Category Scorecards -- top-level improving vs. declining signal */}
+            <div>
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-base font-semibold text-gray-900">Category Health Scorecards</h3>
+                    <span className="text-xs text-gray-400">Sorted by magnitude of movement -- biggest signals first</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {scorecardTags.map(t => {
+                        const isUp = t.totalNetChange > 0;
+                        const isDown = t.totalNetChange < 0;
+                        return (
+                            <button
+                                key={t.tag}
+                                onClick={() => goToCategory(t.tag)}
+                                className={`text-left bg-white rounded-xl p-4 shadow-sm border transition-all hover:shadow-md ${isUp ? 'border-emerald-100 hover:border-emerald-300' : isDown ? 'border-red-100 hover:border-red-300' : 'border-gray-100 hover:border-indigo-200'
+                                    }`}
+                            >
+                                <div className="text-sm font-bold text-gray-900 truncate" title={t.tag}>{t.tag}</div>
+                                <div className="flex items-center justify-between mt-3">
+                                    <div>
+                                        <div className="text-lg font-bold text-gray-900">{t.totalVolume.toLocaleString()}</div>
+                                        <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Volume</div>
+                                    </div>
+                                    <div className="text-right">
+                                        <div className="text-lg font-bold text-gray-900">{t.avgPosition || '-'}</div>
+                                        <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Avg Pos</div>
+                                    </div>
+                                </div>
+                                <div className={`mt-3 inline-flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-full ${isUp ? 'bg-emerald-50 text-emerald-600' : isDown ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-400'
+                                    }`}>
+                                    {isUp ? <ArrowUpRight className="w-3.5 h-3.5" /> : isDown ? <ArrowDownRight className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                                    {t.totalNetChange > 0 ? `+${t.totalNetChange}` : t.totalNetChange}
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Category Search Volume & Keyword Breakdown Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+                    <h3 className="text-base font-semibold text-gray-900 mb-1">Category Rank Trend</h3>
+                    <p className="text-xs text-gray-400 mb-4">Avg position over time for the top {trendTags.length} categories currently in view (respects active filters). Lower is better.</p>
+                    {categoryTrendData.length === 0 || trendTags.length === 0 ? (
+                        <div className="h-64 flex items-center justify-center border-2 border-dashed border-gray-200 rounded-lg">
+                            <span className="text-gray-400 font-medium">No timeline data available</span>
+                        </div>
+                    ) : (
+                        <div className="h-64 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={categoryTrendData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                    <YAxis reversed domain={['dataMin - 1', 'dataMax + 1']} tick={{ fontSize: 11 }} label={{ value: 'Avg Position', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9ca3af' } }} />
+                                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
+                                    <Legend iconType="circle" wrapperStyle={{ paddingTop: '10px', fontSize: '11px' }} />
+                                    {trendTags.map((tag, i) => (
+                                        <Line key={tag} type="monotone" dataKey={tag} stroke={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                                    ))}
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
+                </div>
+
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                    <h3 className="text-base font-semibold text-gray-900 mb-1">Volume by Category</h3>
+                    <p className="text-xs text-gray-400 mb-4">Click a slice to open that category's report.</p>
+                    <div className="h-64 w-full">
+                        {pieData.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
+                                    <Pie
+                                        data={pieData}
+                                        cx="50%" cy="50%"
+                                        innerRadius={40} outerRadius={80}
+                                        dataKey="value"
+                                        stroke="#ffffff"
+                                        strokeWidth={2}
+                                        onClick={(_: any, index: number) => {
+                                            const name = pieData[index]?.name;
+                                            if (name) goToCategory(name);
+                                        }}
+                                        style={{ cursor: 'pointer' }}
+                                    >
+                                        {pieData.map((entry, i) => (
+                                            <Cell key={`cell-${entry.name}`} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip formatter={(value: any) => new Intl.NumberFormat('en-US').format(Number(value) || 0)} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-gray-400 text-sm">No data</div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -209,7 +313,9 @@ export const SegmentsView: React.FC = () => {
                         <tbody className="divide-y divide-gray-200 bg-white text-sm">
                             {sortedTags.map((row) => (
                                 <tr key={row.tag} className="hover:bg-gray-50">
-                                    <td className="px-6 py-3.5 font-bold text-gray-900">{row.tag}</td>
+                                    <td className="px-6 py-3.5 font-bold text-gray-900">
+                                        <Link to={`/segments/${encodeURIComponent(row.tag)}`} className="text-indigo-600 hover:underline">{row.tag}</Link>
+                                    </td>
                                     <td className="px-6 py-3.5 text-right font-medium text-gray-700">{row.keywords}</td>
                                     <td className="px-6 py-3.5 text-right font-bold text-indigo-600">{row.totalVolume.toLocaleString()}</td>
                                     <td className="px-6 py-3.5 text-right font-medium text-gray-700">{row.avgPosition || '-'}</td>

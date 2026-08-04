@@ -11,6 +11,7 @@ import { OverviewView } from './views/OverviewView';
 import { OpportunitiesView } from './views/OpportunitiesView';
 import { LossesView } from './views/LossesView';
 import { SegmentsView } from './views/SegmentsView';
+import { CategoryDetailView } from './views/CategoryDetailView';
 import { KeywordDetailView } from './views/KeywordDetailView';
 import { SortableHeader, type SortConfig } from './components/SortableHeader';
 import {
@@ -1489,6 +1490,7 @@ export default function App() {
             <Route path="opportunities" element={<OpportunitiesView />} />
             <Route path="losses" element={<LossesView />} />
             <Route path="segments" element={<SegmentsView />} />
+            <Route path="segments/:tag" element={<CategoryDetailView />} />
             <Route path="keyword/:keywordId" element={<KeywordDetailView />} />
 
             {/* Legacy Route Compatibility Redirects */}
